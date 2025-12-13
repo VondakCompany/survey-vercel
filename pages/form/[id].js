@@ -7,71 +7,80 @@ const SUPABASE_URL = 'https://xrgrlfpjeovjeshebxya.supabase.co'
 const SUPABASE_KEY = 'sb_publishable_TgJkb2-QML1h1aOAYAVupg_njoyLImS'
 const supabase = createClient(SUPABASE_URL, SUPABASE_KEY)
 
-// Helper function to check if a slide is a data-gathering type
+// Helper functions for slide types
 const isQuestionSlide = (type) => !['title_slide', 'info_slide', 'consent_slide'].includes(type)
 const isPresentationSlide = (type) => ['title_slide', 'info_slide'].includes(type)
 const isConsentSlide = (type) => type === 'consent_slide'
-
 
 export default function FormPage() {
     const router = useRouter()
     const { id } = router.query
     
-    const [form, setForm] = useState(null)
     const [questions, setQuestions] = useState([])
     const [index, setIndex] = useState(0)
     const [answers, setAnswers] = useState({})
     const [loading, setLoading] = useState(true)
     const [error, setError] = useState('')
 
+    // --- 1. Fetch Questions ---
     useEffect(() => {
         if (!id) return
         const fetchData = async () => {
-            let { data: f, error: fErr } = await supabase.from('forms').select('*').eq('id', id).single()
-            if (fErr) { setError('Form not found'); setLoading(false); return }
-            setForm(f)
-
+            // Note: Forms table data is not used for rendering in this simplified version
+            // Fetch questions directly
             let { data: q, error: qErr } = await supabase.from('questions').select('*').eq('form_id', id).order('order')
-            if (qErr) { setError(qErr.message); }
-            else { setQuestions(q) }
+            
+            if (qErr) { 
+                setError(qErr.message); 
+            } else if (!q || q.length === 0) {
+                 setError('No questions found for this form ID.');
+            }
+            else { 
+                setQuestions(q) 
+            }
             setLoading(false)
         }
         fetchData()
     }, [id])
 
+    // --- 2. Handle Navigation and Submission ---
     const handleNext = async () => {
         const q = questions[index]
         const val = answers[q.id]
         
         // 1. Validation Logic
-        if (isQuestionSlide(q.question_type) || q.required || isConsentSlide(q.question_type)) {
+        if (isQuestionSlide(q.question_type) || isConsentSlide(q.question_type)) {
             
-            // Check for general answer presence (required for all data and consent slides)
-            if (!val || (typeof val === 'string' && !val.trim())) {
-                alert(isConsentSlide(q.question_type) ? 'Please indicate your consent.' : 'Please fill this out')
-                return
+            // Check required fields (including consent which is mandatory)
+            if (q.required || isConsentSlide(q.question_type)) {
+                if (!val || (typeof val === 'string' && !val.trim())) {
+                    alert(isConsentSlide(q.question_type) ? 'Please indicate your choice to continue.' : 'Please fill this out')
+                    return
+                }
             }
 
-            // Specific Consent Check (must be "I Consent")
-            if (isConsentSlide(q.question_type) && val !== 'I Consent') {
-                alert('Cannot proceed without granting consent.')
+            // Specific Consent Check (must be "I Consent" to proceed)
+            if (isConsentSlide(q.question_type) && val === 'I Do Not Consent') {
+                alert('You must consent to continue this survey.')
                 return;
             }
 
-            // Question-specific validation
-            if (q.question_type === 'checkbox' && (!val || val.split(',').length === 0)) {
-                alert('Please select at least one option'); return;
-            }
-            if (val && q.question_type === 'email') {
-                const re = /[^@]+@[^@]+\.[^@]+/
-                if (!re.test(val)) { alert('Please enter a valid email address'); return; }
-            }
-            if (val && q.question_type === 'phone') {
-                const re = /^[\+]?[(]?[0-9]{3}[)]?[-\s\.]?[0-9]{3}[-\s\.]?[0-9]{4,6}$/
-                if (!re.test(val) && val.length < 7) { alert('Please enter a valid phone number'); return; }
-            }
-            if (val && q.question_type === 'number') {
-                if (isNaN(val)) { alert('Please enter a valid number'); return; }
+            // Question-specific validation (only if value exists)
+            if (val) {
+                if (q.question_type === 'checkbox' && (!val || val.split(',').length === 0)) {
+                    alert('Please select at least one option'); return;
+                }
+                if (q.question_type === 'email') {
+                    const re = /[^@]+@[^@]+\.[^@]+/
+                    if (!re.test(val)) { alert('Please enter a valid email address'); return; }
+                }
+                if (q.question_type === 'phone') {
+                    const re = /^[\+]?[(]?[0-9]{3}[)]?[-\s\.]?[0-9]{3}[-\s\.]?[0-9]{4,6}$/
+                    if (!re.test(val) && val.length < 7) { alert('Please enter a valid phone number'); return; }
+                }
+                if (q.question_type === 'number') {
+                    if (isNaN(val)) { alert('Please enter a valid number'); return; }
+                }
             }
         }
         
@@ -82,7 +91,7 @@ export default function FormPage() {
             // Filter answers to only include data-collecting questions
             const responseData = {}
             questions.forEach(q => {
-                if (isQuestionSlide(q.question_type)) {
+                if (isQuestionSlide(q.question_type) || isConsentSlide(q.question_type)) {
                     responseData[q.id] = answers[q.id]
                 }
             })
@@ -102,8 +111,8 @@ export default function FormPage() {
     }
 
     const handleKeyDown = (e) => {
-        // Only trigger next on Enter if it's a text input field, not a textarea or button
-        if (e.key === 'Enter' && e.target.tagName !== 'TEXTAREA' && e.target.tagName !== 'BUTTON') {
+        // Only proceed on Enter if it's a direct text input field
+        if (e.key === 'Enter' && ['INPUT'].includes(e.target.tagName)) {
             e.preventDefault()
             handleNext()
         }
@@ -116,19 +125,24 @@ export default function FormPage() {
     const q = questions[index]
     let val = answers[q.id]
 
-    // Determine the font size for the question text based on slide type
+    // Determine visual style based on slide type
     const questionClass = isPresentationSlide(q.question_type) ? 'text-5xl font-extrabold text-slate-800' : 'text-3xl font-light text-gray-900';
     
-    // Parse options (handles both JSON array and JSON object for rating/slider)
+    // Parse options (handles JSON array, JSON object, or comma-separated string)
     let options = []
     try {
         const parsedOptions = typeof q.options === 'string' ? JSON.parse(q.options) : q.options
         if (Array.isArray(parsedOptions)) {
             options = parsedOptions
-        } else if (q.question_type === 'rating' || q.question_type === 'slider') {
-            options = parsedOptions // Keep as object {min, max} for range rendering
+        } else {
+            // Assume it's an object for range or complex types
+            options = parsedOptions
         }
-    } catch (e) { options = [] }
+    } catch (e) { 
+        // Fallback for simple string options (e.g., in contact_info/address which might store JSON string)
+        options = []
+    }
+
 
     // --- RENDER START ---
     return (
@@ -151,7 +165,7 @@ export default function FormPage() {
                          <span className="text-sm font-bold text-gray-400 mr-2">{index + 1} &rarr;</span>
                     )}
                     {q.question_text}
-                    {q.required && <span className="text-red-500 ml-1">*</span>}
+                    {q.required && !isConsentSlide(q.question_type) && <span className="text-red-500 ml-1">*</span>}
                 </h1>
                 
                 {/* Description / Body Text Block */}
@@ -161,12 +175,12 @@ export default function FormPage() {
                     </p>
                 )}
 
-                {/* Input Area (Hidden for Title/Info Slides) */}
+                {/* Input Area */}
                 <div className="mb-10 min-h-[150px]">
                     
+                    {/* Placeholder for presentation slides (no input needed) */}
                     {isPresentationSlide(q.question_type) && (
-                        // Placeholder for presentation slides
-                        <div className="h-full text-gray-400 text-xl pt-10">...</div>
+                        <div className="h-full text-gray-400 text-xl pt-10">... (Click {q.button_text || 'Next'} to continue)</div>
                     )}
 
                     {/* CONSENT SLIDE INPUT */}
@@ -178,9 +192,9 @@ export default function FormPage() {
                                     onClick={() => setAnswers({ ...answers, [q.id]: opt })}
                                     className={`block w-full text-center p-4 rounded-md border text-lg transition-all ${
                                         val === opt 
-                                            ? 'bg-green-600 text-white border-green-600' 
+                                            ? (opt === 'I Consent' ? 'bg-green-600 border-green-600' : 'bg-red-600 border-red-600')
                                             : 'bg-white border-gray-200 text-gray-700 hover:bg-gray-50'
-                                    }`}
+                                    } text-white`}
                                 >
                                     {opt}
                                 </button>
