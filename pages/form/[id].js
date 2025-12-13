@@ -25,9 +25,15 @@ export default function FormPage() {
     // --- 1. Fetch Questions ---
     useEffect(() => {
         if (!id) return
+        
+        // FIX: Validate UUID length (36 characters) to prevent PostgreSQL error
+        if (id.length !== 36) {
+            setError(`Invalid Form ID format. The ID should be 36 characters long, but found ${id.length}. Please check the URL.`);
+            setLoading(false);
+            return;
+        }
+
         const fetchData = async () => {
-            // Note: Forms table data is not used for rendering in this simplified version
-            // Fetch questions directly
             let { data: q, error: qErr } = await supabase.from('questions').select('*').eq('form_id', id).order('order')
             
             if (qErr) { 
