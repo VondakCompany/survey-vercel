@@ -44,7 +44,8 @@ export default function FormRunner() {
   useEffect(() => {
     const handleKey = (e) => {
       if (e.key === 'Enter' && !e.shiftKey) {
-        if (questions[currentIndex]?.type !== 'text') {
+        // Allow Shift+Enter for long text
+        if (questions[currentIndex]?.type !== 'long_text') {
            e.preventDefault();
            goNext();
         }
@@ -61,9 +62,14 @@ export default function FormRunner() {
 
   const goNext = () => {
     const q = questions[currentIndex];
-    if (q.required && !answers[q.id]) {
-      alert("Please fill out this field.");
-      return;
+    
+    // VALIDATION
+    if (q.required) {
+        const val = answers[q.id];
+        if (val === undefined || val === null || val === "" || (typeof val === 'string' && val.trim() === "")) {
+            alert("Please fill out this field.");
+            return;
+        }
     }
 
     if (currentIndex < questions.length - 1) {
@@ -107,23 +113,38 @@ export default function FormRunner() {
         <div style={styles.content}>
           <h1 style={styles.questionText}>
             <span style={styles.number}>{currentIndex + 1} &rarr;</span>
-            {q.question_text}
+            {q.question_text || "..."}
           </h1>
+          {q.required && <span style={styles.reqMark}>* Required</span>}
           
           {q.description && <h3 style={styles.desc}>{q.description}</h3>}
 
           <div style={styles.inputArea}>
-            {q.type === 'text' && (
+            
+            {/* TEXT / EMAIL / PHONE */}
+            {['text', 'email', 'phone'].includes(q.type) && (
               <input 
-                type="text" 
+                type={q.type === 'email' ? 'email' : 'text'}
                 style={styles.textInput}
-                placeholder="Type your answer..."
+                placeholder={q.type === 'email' ? "name@example.com" : "Type your answer..."}
                 value={answers[q.id] || ''}
                 onChange={e => handleAnswer(e.target.value)}
                 autoFocus
               />
             )}
 
+            {/* LONG TEXT */}
+            {q.type === 'long_text' && (
+              <textarea 
+                style={styles.textArea}
+                placeholder="Type your answer here..."
+                value={answers[q.id] || ''}
+                onChange={e => handleAnswer(e.target.value)}
+                autoFocus
+              />
+            )}
+
+            {/* SINGLE CHOICE */}
             {q.type === 'single_choice' && (
               <div style={styles.choiceGrid}>
                 {q.options?.map((opt, i) => (
@@ -139,6 +160,22 @@ export default function FormRunner() {
               </div>
             )}
 
+            {/* YES / NO */}
+            {q.type === 'yes_no' && (
+              <div style={styles.ratingRow}>
+                 {['Yes', 'No'].map(opt => (
+                    <button
+                        key={opt}
+                        style={answers[q.id] === opt ? styles.choiceBtnActive : styles.choiceBtn}
+                        onClick={() => { handleAnswer(opt); setTimeout(goNext, 250); }}
+                    >
+                        {opt}
+                    </button>
+                 ))}
+              </div>
+            )}
+
+            {/* RATING 1-5 */}
             {q.type === 'rating' && (
               <div style={styles.ratingRow}>
                 {[1,2,3,4,5].map(num => (
@@ -152,7 +189,23 @@ export default function FormRunner() {
                 ))}
               </div>
             )}
+            
+            {/* NPS 0-10 */}
+            {q.type === 'nps' && (
+              <div style={styles.npsRow}>
+                {[0,1,2,3,4,5,6,7,8,9,10].map(num => (
+                  <button
+                    key={num}
+                    style={answers[q.id] === num ? styles.npsBtnActive : styles.npsBtn}
+                    onClick={() => { handleAnswer(num); setTimeout(goNext, 250); }}
+                  >
+                    {num}
+                  </button>
+                ))}
+              </div>
+            )}
 
+            {/* DATE */}
             {q.type === 'date' && (
                <input 
                 type="date" 
@@ -208,14 +261,15 @@ const styles = {
   },
   content: { 
     width: '100%', 
-    maxWidth: '720px', // FIXED: Tighter width prevents "stretched" look
+    maxWidth: '720px', 
   },
   questionText: { 
     fontSize: '28px', 
     fontWeight: '300', 
-    marginBottom: '16px',
+    marginBottom: '8px',
     lineHeight: '1.3'
   },
+  reqMark: { color: 'red', fontSize: '12px', display: 'block', marginBottom: '16px' },
   number: { 
     color: '#0445AF', fontWeight: '600', marginRight: '12px', fontSize: '24px'
   },
@@ -224,7 +278,7 @@ const styles = {
     color: 'rgba(38, 38, 39, 0.7)',
     fontWeight: 'normal',
     marginBottom: '32px',
-    marginTop: '-8px'
+    marginTop: '0px'
   },
   inputArea: { marginBottom: '40px' },
   textInput: { 
@@ -237,6 +291,17 @@ const styles = {
     outline: 'none',
     color: '#0445AF'
   },
+  textArea: { 
+    width: '100%', 
+    fontSize: '22px', 
+    border: '2px solid rgba(4, 69, 175, 0.3)', 
+    padding: '12px', 
+    background: 'transparent', 
+    outline: 'none',
+    color: '#0445AF',
+    minHeight: '120px',
+    borderRadius: '4px'
+  },
   choiceGrid: { 
     display: 'flex', flexDirection: 'column', gap: '10px', maxWidth: '100%' 
   },
@@ -245,13 +310,13 @@ const styles = {
     border: '1px solid rgba(4, 69, 175, 0.3)', 
     backgroundColor: 'rgba(255,255,255,0.8)', 
     color: '#0445AF', borderRadius: '4px', cursor: 'pointer', transition: 'all 0.2s ease',
-    display: 'flex', alignItems: 'center'
+    display: 'flex', alignItems: 'center', minWidth: '120px'
   },
   choiceBtnActive: { 
     textAlign: 'left', padding: '12px 16px', fontSize: '18px', 
     border: '1px solid #0445AF', backgroundColor: '#0445AF', 
     color: 'white', borderRadius: '4px', cursor: 'pointer',
-    display: 'flex', alignItems: 'center'
+    display: 'flex', alignItems: 'center', minWidth: '120px'
   },
   key: { 
     border: '1px solid currentColor', borderRadius: '3px', width: '24px', height: '24px', 
@@ -264,6 +329,15 @@ const styles = {
   },
   ratingBtnActive: { 
     width: '50px', height: '50px', fontSize: '20px', 
+    border: '1px solid #0445AF', backgroundColor: '#0445AF', color: 'white', cursor: 'pointer', borderRadius: '4px' 
+  },
+  npsRow: { display: 'flex', gap: '5px', flexWrap: 'wrap' },
+  npsBtn: { 
+    width: '40px', height: '40px', fontSize: '14px', 
+    border: '1px solid #ccc', backgroundColor: 'white', cursor: 'pointer', borderRadius: '4px' 
+  },
+  npsBtnActive: { 
+    width: '40px', height: '40px', fontSize: '14px', 
     border: '1px solid #0445AF', backgroundColor: '#0445AF', color: 'white', cursor: 'pointer', borderRadius: '4px' 
   },
   navBar: { display: 'flex', gap: '20px', marginTop: '40px' },
