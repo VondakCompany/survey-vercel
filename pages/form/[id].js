@@ -1,227 +1,385 @@
-import { useState, useEffect } from 'react';
-import { createClient } from '@supabase/supabase-js';
-import { useRouter } from 'next/router';
+import { useState, useEffect } from 'react'
+import { useRouter } from 'next/router'
+import { createClient } from '@supabase/supabase-js'
 
-const SUPABASE_URL = "https://xrgrlfpjeovjeshebxya.supabase.co";
-const SUPABASE_KEY = "sb_publishable_TgJkb2-QML1h1aOAYAVupg_njoyLImS"; 
+// --- CONFIG ---
+const SUPABASE_URL = 'https://xrgrlfpjeovjeshebxya.supabase.co'
+const SUPABASE_KEY = 'sb_publishable_TgJkb2-QML1h1aOAYAVupg_njoyLImS' // Make sure this is your ANON key for public access
+const supabase = createClient(SUPABASE_URL, SUPABASE_KEY)
 
-const supabase = createClient(SUPABASE_URL, SUPABASE_KEY);
-
-export default function FormRunner() {
-  const router = useRouter();
-  const { id } = router.query;
-
-  const [questions, setQuestions] = useState([]);
-  const [answers, setAnswers] = useState({});
-  const [currentIndex, setCurrentIndex] = useState(0);
-  const [isFinished, setIsFinished] = useState(false);
-  const [loading, setLoading] = useState(true);
-
-  useEffect(() => {
-    if (!id) return;
-    const loadData = async () => {
-      const { data: qData, error } = await supabase
-        .from('questions')
-        .select('*')
-        .eq('form_id', id)
-        .order('order', { ascending: true });
-
-      if (error) console.error("Error loading questions:", error);
-
-      const parsed = (qData || []).map(q => {
-        let opts = q.options;
-        // Handle Range Config stored as JSON
-        if (typeof opts === 'string') opts = JSON.parse(opts);
-        
-        return { ...q, type: q.question_type, options: opts };
-      });
-
-      setQuestions(parsed);
-      setLoading(false);
-    };
-    loadData();
-  }, [id]);
-
-  useEffect(() => {
-    const handleKey = (e) => {
-      if (e.key === 'Enter' && !e.shiftKey) {
-        if (questions[currentIndex]?.type !== 'long_text') {
-           e.preventDefault();
-           goNext();
-        }
-      }
-    };
-    window.addEventListener('keydown', handleKey);
-    return () => window.removeEventListener('keydown', handleKey);
-  }, [currentIndex, questions, answers]);
-
-  const handleAnswer = (val) => {
-    const qId = questions[currentIndex].id;
-    setAnswers(prev => ({ ...prev, [qId]: val }));
-  };
-
-  const goNext = () => {
-    const q = questions[currentIndex];
-    
-    if (q.required) {
-        const val = answers[q.id];
-        if (val === undefined || val === null || val === "" || (typeof val === 'string' && val.trim() === "")) {
-            alert("Please fill out this field.");
-            return;
-        }
-    }
-
-    if (currentIndex < questions.length - 1) {
-      setCurrentIndex(prev => prev + 1);
-    } else {
-      submitForm();
-    }
-  };
-
-  const goBack = () => {
-    if (currentIndex > 0) setCurrentIndex(prev => prev - 1);
-  };
-
-  const submitForm = async () => {
-    try {
-      const { error } = await supabase.from('responses').insert({ form_id: id, response: answers });
-      if (error) throw error;
-      setIsFinished(true);
-    } catch (err) { alert("Submission failed: " + err.message); }
-  };
-
-  if (loading) return <div style={styles.center}>Loading form...</div>;
-  if (isFinished) return <div style={styles.center}><h1>All done!</h1><p>Thanks for your time.</p></div>;
-  if (questions.length === 0) return <div style={styles.center}>No questions found.</div>;
-
-  const q = questions[currentIndex];
-  const progress = ((currentIndex + 1) / questions.length) * 100;
+export default function FormPage() {
+  const router = useRouter()
+  const { id } = router.query
   
-  // Helpers for Range/Slider
-  const minVal = q.options?.min || 0;
-  const maxVal = q.options?.max || 10;
+  const [form, setForm] = useState(null)
+  const [questions, setQuestions] = useState([])
+  const [index, setIndex] = useState(0)
+  const [answers, setAnswers] = useState({})
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState('')
+
+  // Load Data
+  useEffect(() => {
+    if (!id) return
+    const fetchData = async () => {
+      // 1. Get Form Title
+      let { data: f, error: fErr } = await supabase.from('forms').select('*').eq('id', id).single()
+      if (fErr) { setError('Form not found'); setLoading(false); return }
+      setForm(f)
+
+      // 2. Get Questions
+      let { data: q, error: qErr } = await supabase.from('questions').select('*').eq('form_id', id).order('order')
+      if (qErr) { setError(qErr.message); }
+      else { setQuestions(q) }
+      setLoading(false)
+    }
+    fetchData()
+  }, [id])
+
+  // --- NAVIGATION & VALIDATION ---
+  const handleNext = async () => {
+    const q = questions[index]
+    const val = answers[q.id]
+
+    // 1. Required Check
+    if (q.required) {
+      if (!val || (typeof val === 'string' && !val.trim())) {
+        alert('Please fill this out')
+        return
+      }
+      // Checkbox/Matrix specific empty checks
+      if (q.question_type === 'checkbox' && (!val || val.length === 0)) {
+         alert('Please select at least one option'); return;
+      }
+    }
+
+    // 2. Validation Logic (Strict Email/Phone/Number)
+    if (val) {
+      if (q.question_type === 'email') {
+        const re = /[^@]+@[^@]+\.[^@]+/
+        if (!re.test(val)) { alert('Please enter a valid email address'); return; }
+      }
+      if (q.question_type === 'phone') {
+        // Allows +, -, space, digits, length check
+        const re = /^[\+]?[(]?[0-9]{3}[)]?[-\s\.]?[0-9]{3}[-\s\.]?[0-9]{4,6}$/
+        if (!re.test(val) && val.length < 7) { alert('Please enter a valid phone number'); return; }
+      }
+      if (q.question_type === 'number') {
+        if (isNaN(val)) { alert('Please enter a valid number'); return; }
+      }
+    }
+
+    // 3. Submit or Next
+    if (index < questions.length - 1) {
+      setIndex(index + 1)
+    } else {
+      // SUBMIT
+      await supabase.from('responses').insert({
+        form_id: id,
+        response: answers,
+        created_at: new Date().toISOString()
+      })
+      alert('Thank you! Your response has been recorded.')
+      // Optional: Redirect or reset
+      // router.push('/thank-you') 
+    }
+  }
+
+  const handleBack = () => {
+    if (index > 0) setIndex(index - 1)
+  }
+
+  // Handle "Enter" key
+  const handleKeyDown = (e) => {
+    if (e.key === 'Enter') {
+      e.preventDefault()
+      handleNext()
+    }
+  }
+
+  // --- RENDERERS ---
+
+  if (loading) return <div className="p-10 text-center">Loading...</div>
+  if (error) return <div className="p-10 text-center text-red-500">{error}</div>
+  if (questions.length === 0) return <div className="p-10 text-center">This form has no questions.</div>
+
+  const q = questions[index]
+  const val = answers[q.id]
+  
+  // Parse Options (JSON or Array)
+  let options = []
+  try {
+    options = typeof q.options === 'string' ? JSON.parse(q.options) : q.options
+  } catch (e) { options = [] }
 
   return (
-    <div style={styles.container}>
-      <div style={styles.progressContainer}>
-        <div style={{...styles.progressFill, width: `${progress}%`}}></div>
+    <div className="min-h-screen bg-gray-50 flex flex-col items-center justify-center p-4 font-sans text-gray-800">
+      
+      {/* Progress Bar */}
+      <div className="fixed top-0 left-0 w-full h-2 bg-gray-200">
+        <div 
+          className="h-full bg-blue-600 transition-all duration-300"
+          style={{ width: `${((index + 1) / questions.length) * 100}%` }}
+        />
       </div>
 
-      <div style={styles.stage}>
-        <div style={styles.content}>
-          <h1 style={styles.questionText}>
-            <span style={styles.number}>{currentIndex + 1} &rarr;</span>
-            {q.question_text || "..."}
-          </h1>
-          {q.required && <span style={styles.reqMark}>* Required</span>}
+      <div className="w-full max-w-2xl bg-transparent">
+        
+        {/* Question Text */}
+        <h1 className="text-3xl font-light mb-2 text-gray-900">
+          <span className="text-sm font-bold text-gray-400 mr-2">{index + 1} &rarr;</span>
+          {q.question_text}
+          {q.required && <span className="text-red-500 ml-1">*</span>}
+        </h1>
+        
+        {/* Description */}
+        {q.description && (
+          <p className="text-lg text-gray-500 mb-8 whitespace-pre-wrap">{q.description}</p>
+        )}
+
+        {/* --- INPUT AREA --- */}
+        <div className="mb-10">
           
-          {q.description && <h3 style={styles.desc}>{q.description}</h3>}
+          {/* TEXT / EMAIL / PHONE / NUMBER */}
+          {['text', 'email', 'phone', 'number'].includes(q.question_type) && (
+            <input
+              type={q.question_type === 'number' ? 'text' : q.question_type}
+              inputMode={q.question_type === 'number' ? 'numeric' : 'text'}
+              className="w-full bg-transparent border-b-2 border-blue-200 text-3xl py-2 focus:outline-none focus:border-blue-600 text-blue-800 placeholder-gray-300"
+              placeholder="Type your answer..."
+              value={val || ''}
+              onChange={(e) => setAnswers({ ...answers, [q.id]: e.target.value })}
+              onKeyDown={handleKeyDown}
+              autoFocus
+            />
+          )}
 
-          <div style={styles.inputArea}>
-            
-            {['text', 'email', 'phone'].includes(q.type) && (
+          {/* LONG TEXT (No Enter Key support) */}
+          {q.question_type === 'long_text' && (
+            <textarea
+              className="w-full bg-transparent border-2 border-blue-200 rounded-md text-xl p-4 focus:outline-none focus:border-blue-600 text-blue-800"
+              rows={4}
+              placeholder="Type your answer here..."
+              value={val || ''}
+              onChange={(e) => setAnswers({ ...answers, [q.id]: e.target.value })}
+              autoFocus
+            />
+          )}
+
+          {/* SINGLE CHOICE / YES_NO */}
+          {['single_choice', 'yes_no'].includes(q.question_type) && (
+            <div className="space-y-3">
+              {(q.question_type === 'yes_no' ? ['Yes', 'No'] : options).map((opt, i) => (
+                <button
+                  key={i}
+                  onClick={() => setAnswers({ ...answers, [q.id]: opt })}
+                  className={`block w-full text-left p-4 rounded-md border text-lg transition-all ${
+                    val === opt 
+                      ? 'bg-blue-600 text-white border-blue-600' 
+                      : 'bg-white border-gray-200 text-gray-700 hover:bg-gray-50'
+                  }`}
+                >
+                  <span className="font-bold mr-4 opacity-50">{String.fromCharCode(65 + i)}</span>
+                  {opt}
+                </button>
+              ))}
+            </div>
+          )}
+
+          {/* CHECKBOX */}
+          {q.question_type === 'checkbox' && (
+             <div className="space-y-3">
+               {options.map((opt, i) => {
+                 const current = val ? val.split(',') : []
+                 const checked = current.includes(opt)
+                 return (
+                   <label key={i} className={`flex items-center w-full p-4 rounded-md border cursor-pointer text-lg ${checked ? 'bg-blue-50 border-blue-500' : 'bg-white border-gray-200'}`}>
+                     <input 
+                       type="checkbox" 
+                       className="w-5 h-5 mr-4 accent-blue-600"
+                       checked={checked}
+                       onChange={(e) => {
+                         let newSel = [...current]
+                         if (e.target.checked) newSel.push(opt)
+                         else newSel = newSel.filter(x => x !== opt)
+                         setAnswers({ ...answers, [q.id]: newSel.join(',') })
+                       }}
+                     />
+                     {opt}
+                   </label>
+                 )
+               })}
+             </div>
+          )}
+
+          {/* DROPDOWN */}
+          {q.question_type === 'dropdown' && (
+            <select 
+              className="w-full p-4 text-xl border rounded-md bg-white focus:outline-none focus:border-blue-600"
+              value={val || ''}
+              onChange={(e) => setAnswers({ ...answers, [q.id]: e.target.value })}
+            >
+              <option value="">Select an option...</option>
+              {options.map((opt, i) => <option key={i} value={opt}>{opt}</option>)}
+            </select>
+          )}
+
+          {/* RATING */}
+          {q.question_type === 'rating' && (
+            <div className="flex gap-4 flex-wrap">
+              {Array.from({ length: (options.max || 5) - (options.min || 1) + 1 }, (_, i) => i + (options.min || 1)).map(num => (
+                <button
+                  key={num}
+                  onClick={() => setAnswers({ ...answers, [q.id]: String(num) })}
+                  className={`w-14 h-14 rounded-lg border-2 text-xl font-bold transition-all ${
+                    val === String(num) ? 'bg-blue-600 text-white border-blue-600' : 'bg-white border-gray-200 text-gray-600 hover:border-blue-400'
+                  }`}
+                >
+                  {num}
+                </button>
+              ))}
+            </div>
+          )}
+
+          {/* SLIDER */}
+          {q.question_type === 'slider' && (
+            <div className="pt-8 px-2">
+              <div className="text-center text-4xl font-bold text-blue-700 mb-4">{val || options.min || 0}</div>
               <input 
-                type={q.type === 'email' ? 'email' : 'text'}
-                style={styles.textInput}
-                placeholder="Type your answer..."
-                value={answers[q.id] || ''}
-                onChange={e => handleAnswer(e.target.value)}
-                autoFocus
+                type="range" 
+                min={options.min || 0} 
+                max={options.max || 10} 
+                value={val || options.min || 0}
+                onChange={(e) => setAnswers({ ...answers, [q.id]: e.target.value })}
+                className="w-full h-2 bg-gray-200 rounded-lg appearance-none cursor-pointer accent-blue-600"
               />
-            )}
-
-            {q.type === 'long_text' && (
-              <textarea style={styles.textArea} placeholder="Type your answer here..."
-                value={answers[q.id] || ''} onChange={e => handleAnswer(e.target.value)} autoFocus />
-            )}
-
-            {q.type === 'single_choice' && Array.isArray(q.options) && (
-              <div style={styles.choiceGrid}>
-                {q.options.map((opt, i) => (
-                  <button key={i} style={answers[q.id] === opt ? styles.choiceBtnActive : styles.choiceBtn}
-                    onClick={() => { handleAnswer(opt); setTimeout(goNext, 250); }}>
-                    <span style={styles.key}>{String.fromCharCode(65+i)}</span>{opt}
-                  </button>
-                ))}
+              <div className="flex justify-between text-gray-400 mt-2">
+                <span>{options.min || 0}</span>
+                <span>{options.max || 10}</span>
               </div>
-            )}
+            </div>
+          )}
 
-            {q.type === 'yes_no' && (
-              <div style={styles.ratingRow}>
-                 {['Yes', 'No'].map(opt => (
-                    <button key={opt} style={answers[q.id] === opt ? styles.choiceBtnActive : styles.choiceBtn}
-                        onClick={() => { handleAnswer(opt); setTimeout(goNext, 250); }}>{opt}</button>
-                 ))}
-              </div>
-            )}
+          {/* DATE */}
+          {q.question_type === 'date' && (
+            <input 
+              type="date"
+              className="w-full p-4 text-xl border rounded-md bg-white focus:outline-none focus:border-blue-600"
+              value={val || ''}
+              onChange={(e) => setAnswers({ ...answers, [q.id]: e.target.value })}
+            />
+          )}
 
-            {q.type === 'rating' && (
-              <div style={styles.ratingRow}>
-                {Array.from({length: (maxVal - minVal + 1)}, (_, i) => i + minVal).map(num => (
-                  <button key={num} style={answers[q.id] === num ? styles.ratingBtnActive : styles.ratingBtn}
-                    onClick={() => { handleAnswer(num); setTimeout(goNext, 250); }}>{num}</button>
-                ))}
-              </div>
-            )}
-            
-            {q.type === 'slider' && (
-              <div style={styles.sliderContainer}>
-                <div style={styles.sliderVal}>{answers[q.id] || minVal}</div>
-                <input type="range" min={minVal} max={maxVal} 
-                  value={answers[q.id] || minVal}
-                  onChange={e => handleAnswer(parseInt(e.target.value))}
-                  style={styles.slider}
-                />
-                <div style={styles.sliderLabels}><span>{minVal}</span><span>{maxVal}</span></div>
-              </div>
-            )}
+          {/* CONTACT INFO */}
+          {q.question_type === 'contact_info' && (
+            <div className="space-y-4">
+              {['name', 'email', 'phone', 'company'].map(field => {
+                 const currentObj = val ? JSON.parse(val) : {}
+                 return (
+                   <div key={field} className="flex flex-col">
+                     <label className="text-xs font-bold uppercase text-gray-500 mb-1">{field}</label>
+                     <input 
+                       type={field === 'email' ? 'email' : 'text'}
+                       className="p-3 border rounded-md focus:border-blue-600 outline-none"
+                       placeholder={`Enter ${field}...`}
+                       value={currentObj[field] || ''}
+                       onChange={(e) => {
+                         const newObj = { ...currentObj, [field]: e.target.value }
+                         setAnswers({ ...answers, [q.id]: JSON.stringify(newObj) })
+                       }}
+                     />
+                   </div>
+                 )
+              })}
+            </div>
+          )}
 
-            {q.type === 'date' && (
-               <input type="date" style={styles.textInput} value={answers[q.id] || ''}
-                onChange={e => handleAnswer(e.target.value)} autoFocus />
-            )}
-          </div>
+           {/* ADDRESS */}
+           {q.question_type === 'address' && (
+            <div className="space-y-4">
+              {['street', 'city', 'zip', 'country'].map(field => {
+                 const currentObj = val ? JSON.parse(val) : {}
+                 return (
+                   <div key={field} className="flex flex-col">
+                     <label className="text-xs font-bold uppercase text-gray-500 mb-1">{field}</label>
+                     <input 
+                       type="text"
+                       className="p-3 border rounded-md focus:border-blue-600 outline-none"
+                       placeholder={`Enter ${field}...`}
+                       value={currentObj[field] || ''}
+                       onChange={(e) => {
+                         const newObj = { ...currentObj, [field]: e.target.value }
+                         setAnswers({ ...answers, [q.id]: JSON.stringify(newObj) })
+                       }}
+                     />
+                   </div>
+                 )
+              })}
+            </div>
+          )}
 
-          <div style={styles.navBar}>
-            {currentIndex > 0 && <button onClick={goBack} style={styles.backBtn}>Back</button>}
-            <button onClick={goNext} style={styles.nextBtn}>{currentIndex === questions.length - 1 ? 'Submit' : (q.button_text || 'OK')}</button>
-          </div>
+          {/* MATRIX */}
+          {q.question_type === 'matrix' && (
+            <div className="overflow-x-auto">
+              <table className="w-full text-left border-collapse">
+                <thead>
+                  <tr>
+                    <th className="p-2"></th>
+                    {options.map((col, i) => (
+                      <th key={i} className="p-2 text-center text-sm font-bold text-gray-600">{col}</th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {(q.description || "Item 1").split('\n').filter(x => x.trim()).map((rowLabel, rI) => {
+                    const currentObj = val ? JSON.parse(val) : {}
+                    return (
+                      <tr key={rI} className="border-b">
+                        <td className="p-3 font-medium text-gray-700">{rowLabel}</td>
+                        {options.map((col, cI) => (
+                          <td key={cI} className="p-3 text-center">
+                            <input 
+                              type="radio"
+                              name={`matrix-${q.id}-${rI}`}
+                              className="w-5 h-5 accent-blue-600 cursor-pointer"
+                              checked={currentObj[rowLabel] === col}
+                              onChange={() => {
+                                const newObj = { ...currentObj, [rowLabel]: col }
+                                setAnswers({ ...answers, [q.id]: JSON.stringify(newObj) })
+                              }}
+                            />
+                          </td>
+                        ))}
+                      </tr>
+                    )
+                  })}
+                </tbody>
+              </table>
+            </div>
+          )}
+
         </div>
-      </div>
-      <div style={styles.branding}>Powered by SlideForm</div>
-    </div>
-  );
-}
 
-const styles = {
-  container: { fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif', minHeight: '100vh', backgroundColor: '#fafafa', color: '#262627', display: 'flex', flexDirection: 'column' },
-  center: { display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', height: '100vh', fontSize: '1.2rem', color: '#666' },
-  progressContainer: { position: 'fixed', top: 0, left: 0, right: 0, height: '6px', backgroundColor: '#E5E5E5', zIndex: 9999 },
-  progressFill: { height: '100%', backgroundColor: '#0445AF', transition: 'width 0.4s ease' },
-  // CENTERED STAGE
-  stage: { flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '40px', width: '100%', minHeight: '100vh' },
-  content: { width: '100%', maxWidth: '720px' },
-  questionText: { fontSize: '28px', fontWeight: '300', marginBottom: '8px', lineHeight: '1.3' },
-  reqMark: { color: 'red', fontSize: '12px', display: 'block', marginBottom: '16px' },
-  number: { color: '#0445AF', fontWeight: '600', marginRight: '12px', fontSize: '24px' },
-  desc: { fontSize: '18px', color: 'rgba(38, 38, 39, 0.7)', fontWeight: 'normal', marginBottom: '32px', marginTop: '0px' },
-  inputArea: { marginBottom: '40px' },
-  textInput: { width: '100%', fontSize: '28px', border: 'none', borderBottom: '2px solid rgba(4, 69, 175, 0.3)', padding: '10px 0', background: 'transparent', outline: 'none', color: '#0445AF' },
-  textArea: { width: '100%', fontSize: '22px', border: '2px solid rgba(4, 69, 175, 0.3)', padding: '12px', background: 'transparent', outline: 'none', color: '#0445AF', minHeight: '120px', borderRadius: '4px' },
-  choiceGrid: { display: 'flex', flexDirection: 'column', gap: '10px', maxWidth: '100%' },
-  choiceBtn: { textAlign: 'left', padding: '12px 16px', fontSize: '18px', border: '1px solid rgba(4, 69, 175, 0.3)', backgroundColor: 'rgba(255,255,255,0.8)', color: '#0445AF', borderRadius: '4px', cursor: 'pointer', transition: 'all 0.2s ease', display: 'flex', alignItems: 'center', minWidth: '120px' },
-  choiceBtnActive: { textAlign: 'left', padding: '12px 16px', fontSize: '18px', border: '1px solid #0445AF', backgroundColor: '#0445AF', color: 'white', borderRadius: '4px', cursor: 'pointer', display: 'flex', alignItems: 'center', minWidth: '120px' },
-  key: { border: '1px solid currentColor', borderRadius: '3px', width: '24px', height: '24px', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '14px', marginRight: '15px', opacity: 0.7 },
-  ratingRow: { display: 'flex', gap: '10px', flexWrap: 'wrap' },
-  ratingBtn: { minWidth: '50px', height: '50px', fontSize: '20px', border: '1px solid #ccc', backgroundColor: 'white', cursor: 'pointer', borderRadius: '4px', padding: '0 10px' },
-  ratingBtnActive: { minWidth: '50px', height: '50px', fontSize: '20px', border: '1px solid #0445AF', backgroundColor: '#0445AF', color: 'white', cursor: 'pointer', borderRadius: '4px', padding: '0 10px' },
-  // SLIDER STYLES
-  sliderContainer: { display: 'flex', flexDirection: 'column', gap: '10px' },
-  sliderVal: { fontSize: '40px', color: '#0445AF', fontWeight: 'bold', textAlign: 'center' },
-  slider: { width: '100%', cursor: 'pointer' },
-  sliderLabels: { display: 'flex', justifyContent: 'space-between', color: '#666' },
-  navBar: { display: 'flex', gap: '20px', marginTop: '40px' },
-  nextBtn: { padding: '10px 28px', fontSize: '18px', fontWeight: 'bold', backgroundColor: '#0445AF', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer' },
-  backBtn: { padding: '10px 20px', fontSize: '16px', backgroundColor: 'transparent', color: '#666', border: 'none', cursor: 'pointer' },
-  branding: { position: 'fixed', bottom: '20px', right: '20px', padding: '8px 12px', background: 'white', borderRadius: '8px', fontSize: '12px', color: '#666', boxShadow: '0 2px 10px rgba(0,0,0,0.05)' }
-};
+        {/* --- NAVIGATION BUTTONS --- */}
+        <div className="flex justify-between items-center mt-8">
+          {index > 0 ? (
+            <button 
+              onClick={handleBack} 
+              className="text-gray-500 hover:text-gray-800 font-medium px-4 py-2"
+            >
+              Back
+            </button>
+          ) : <div></div>}
+          
+          <button 
+            onClick={handleNext}
+            className="bg-blue-700 hover:bg-blue-800 text-white text-xl font-bold py-3 px-8 rounded-lg shadow-lg transition-transform transform active:scale-95"
+          >
+            {index < questions.length - 1 ? (q.button_text || 'OK') : 'Submit'}
+          </button>
+        </div>
+
+      </div>
+    </div>
+  )
+}
