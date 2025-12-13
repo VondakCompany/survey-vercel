@@ -22,11 +22,11 @@ export default function FormPage() {
     const [loading, setLoading] = useState(true)
     const [error, setError] = useState('')
 
-    // --- 1. Fetch Questions ---
+    // --- 1. Fetch Questions (Includes UUID Validation Fix) ---
     useEffect(() => {
         if (!id) return
         
-        // FIX: Validate UUID length (36 characters) to prevent PostgreSQL error
+        // CRITICAL FIX: Validate UUID length (36 characters) to prevent PostgreSQL error
         if (id.length !== 36) {
             setError(`Invalid Form ID format. The ID should be 36 characters long, but found ${id.length}. Please check the URL.`);
             setLoading(false);
@@ -37,9 +37,10 @@ export default function FormPage() {
             let { data: q, error: qErr } = await supabase.from('questions').select('*').eq('form_id', id).order('order')
             
             if (qErr) { 
-                setError(qErr.message); 
+                // Enhanced error reporting for debugging
+                setError(`Failed to load form questions: ${qErr.message}`); 
             } else if (!q || q.length === 0) {
-                 setError('No questions found for this form ID.');
+                 setError('No questions found for this form ID. Check if it was published correctly.');
             }
             else { 
                 setQuestions(q) 
@@ -97,6 +98,7 @@ export default function FormPage() {
             // Filter answers to only include data-collecting questions
             const responseData = {}
             questions.forEach(q => {
+                // Ensure only slides that provide input data are recorded (Consent is data)
                 if (isQuestionSlide(q.question_type) || isConsentSlide(q.question_type)) {
                     responseData[q.id] = answers[q.id]
                 }
@@ -107,7 +109,7 @@ export default function FormPage() {
                 response: responseData,
                 created_at: new Date().toISOString()
             })
-            // Redirect to a confirmation page
+            // Redirect to the confirmation page
             router.push('/form/confirmed')
         }
     }
@@ -141,11 +143,10 @@ export default function FormPage() {
         if (Array.isArray(parsedOptions)) {
             options = parsedOptions
         } else {
-            // Assume it's an object for range or complex types
+            // Assume it's an object for range or complex types (used by Rating/Slider below)
             options = parsedOptions
         }
     } catch (e) { 
-        // Fallback for simple string options (e.g., in contact_info/address which might store JSON string)
         options = []
     }
 
