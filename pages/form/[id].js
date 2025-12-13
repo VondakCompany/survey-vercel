@@ -1,11 +1,18 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect } from 'react';
 import { createClient } from '@supabase/supabase-js';
 import { useRouter } from 'next/router';
 
-// Initialize Supabase
+// ---------------------------------------------------------
+// CONFIG: HARDCODED CREDENTIALS (TO PREVENT BUILD CRASHES)
+// ---------------------------------------------------------
+const SUPABASE_URL = "https://xrgrlfpjeovjeshebxya.supabase.co";
+const SUPABASE_KEY = "sb_publishable_TgJkb2-QML1h1aOAYAVupg_njoyLImS"; 
+
+// Initialize Client with explicit fallbacks
+// This ensures the build process NEVER receives 'undefined'
 const supabase = createClient(
-  process.env.NEXT_PUBLIC_SUPABASE_URL,
-  process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY
+  SUPABASE_URL || "https://placeholder.supabase.co", 
+  SUPABASE_KEY || "placeholder-key"
 );
 
 export default function FormRunner() {
@@ -51,15 +58,13 @@ export default function FormRunner() {
   useEffect(() => {
     const handleKeyDown = (e) => {
       if (e.key === 'Enter' && !e.shiftKey) {
-        // Prevent default only for non-textarea inputs to avoid blocking new lines
         const currentQ = questions[currentIndex];
+        // Prevent default only for non-textarea inputs to avoid blocking new lines
         if (currentQ && currentQ.type !== 'text') { 
            e.preventDefault(); 
            goNext();
         } else if (currentQ && currentQ.type === 'text') {
-           // allow enter to submit for single line text inputs
-           // You might want to check if it's a textarea vs input
-           // For simplicity, we require manual click for text areas or Ctrl+Enter
+           // Allow natural Enter behavior for text inputs (or specific logic)
         }
       }
     };
@@ -68,7 +73,9 @@ export default function FormRunner() {
   }, [currentIndex, questions, answers]);
 
   const handleAnswer = (val) => {
-    setAnswers({ ...answers, [questions[currentIndex].id]: val });
+    if (questions[currentIndex]) {
+        setAnswers({ ...answers, [questions[currentIndex].id]: val });
+    }
   };
 
   const goNext = () => {
