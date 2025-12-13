@@ -4,8 +4,8 @@ import { useRouter } from 'next/router';
 
 // Initialize Supabase
 const supabase = createClient(
-  process.env.NEXT_PUBLIC_SUPABASE_URL,
-  process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY
+  "https://xrgrlfpjeovjeshebxya.supabase.co",
+  "sb_publishable_TgJkb2-QML1h1aOAYAVupg_njoyLImS" 
 );
 
 export default function FormRunner() {
