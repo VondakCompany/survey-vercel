@@ -1,7 +1,6 @@
 import { useState, useEffect } from 'react'
 import { useRouter } from 'next/router'
 import { createClient } from '@supabase/supabase-js'
-import forge from 'node-forge'
 
 // --- CONFIG ---
 const SUPABASE_URL = 'https://xrgrlfpjeovjeshebxya.supabase.co'
@@ -12,358 +11,304 @@ export default function FormPage() {
   const router = useRouter()
   const { id } = router.query
   
+  const [form, setForm] = useState(null)
   const [questions, setQuestions] = useState([])
   const [index, setIndex] = useState(0)
   const [answers, setAnswers] = useState({})
-  const [keys, setKeys] = useState({ q: null, p: null })
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
-  const [consentChecked, setConsentChecked] = useState(false)
 
-  // --- 1. INITIALIZE & DECRYPT QUESTIONS ---
   useEffect(() => {
     if (!id) return
+    const fetchData = async () => {
+      let { data: f, error: fErr } = await supabase.from('forms').select('*').eq('id', id).single()
+      if (fErr) { setError('Form not found'); setLoading(false); return }
+      setForm(f)
 
-    // Extract Keys from URL Hash (Never sent to server)
-    // Format: #q=<AES_KEY_FOR_QUESTIONS>&p=<RSA_PUBLIC_KEY_FOR_ANSWERS>
-    const hashParams = new URLSearchParams(window.location.hash.substring(1))
-    const qKeyB64 = hashParams.get('q')
-    const pKeyB64 = hashParams.get('p')
-
-    if (!qKeyB64 || !pKeyB64) {
-      setError('MISSING KEYS: Use the full secure link provided by the software.')
-      setLoading(false)
-      return
-    }
-
-    // Decode Keys
-    try {
-      // Python sends URL-safe base64, usually standard is fine but good to be robust
-      const qKey = forge.util.decode64(qKeyB64)
-      const pKey = forge.util.decode64(pKeyB64)
-      setKeys({ q: qKey, p: pKey })
-
-      // Fetch Encrypted Data
-      const fetchData = async () => {
-        let { data: rawData, error: dbError } = await supabase
-          .from('questions')
-          .select('*')
-          .eq('form_id', id)
-          .order('order')
-
-        if (dbError) throw dbError
-
-        // Decrypt Rows (AES-GCM)
-        const decrypted = rawData.map(row => {
-          const decryptField = (b64Cipher) => {
-            if (!b64Cipher) return ""
-            try {
-              // Python sends: IV(12) + TAG(16) + CIPHERTEXT
-              const raw = forge.util.decode64(b64Cipher)
-              const iv = raw.substring(0, 12)
-              const tag = raw.substring(12, 28)
-              const ciphertext = raw.substring(28)
-
-              const decipher = forge.cipher.createDecipher('AES-GCM', qKey)
-              decipher.start({ iv: iv, tag: tag })
-              decipher.update(forge.util.createBuffer(ciphertext))
-              const success = decipher.finish()
-              
-              if(success) return JSON.parse(decipher.output.toString())
-              return "[Decryption Failed]"
-            } catch (e) {
-              console.error(e)
-              return "[Corrupt Data]"
-            }
-          }
-
-          return {
-            ...row,
-            question_text: decryptField(row.question_text),
-            description: decryptField(row.description),
-            options: decryptField(row.options) || []
-          }
-        })
-        setQuestions(decrypted)
-        setLoading(false)
-      }
-      fetchData()
-    } catch (e) {
-      setError("Invalid Key Format")
+      let { data: q, error: qErr } = await supabase.from('questions').select('*').eq('form_id', id).order('order')
+      if (qErr) { setError(qErr.message); }
+      else { setQuestions(q) }
       setLoading(false)
     }
+    fetchData()
   }, [id])
 
-  // --- 2. ENCRYPT & SUBMIT ANSWERS ---
-  const handleSubmit = async () => {
-    try {
-      // A. Prepare Payload
-      const payload = JSON.stringify(answers)
-
-      // B. Generate One-Time Session Key (AES)
-      const sessionKey = forge.random.getBytesSync(32)
-      const iv = forge.random.getBytesSync(12)
-
-      // C. Encrypt Payload (AES-GCM)
-      const cipher = forge.cipher.createCipher('AES-GCM', sessionKey)
-      cipher.start({ iv: iv })
-      cipher.update(forge.util.createBuffer(payload))
-      cipher.finish()
-      const encryptedData = cipher.output.getBytes()
-      const tag = cipher.mode.tag.getBytes()
-
-      // D. Encrypt Session Key with Public Key (RSA-OAEP)
-      // We wrap the PEM properly
-      const pem = `-----BEGIN PUBLIC KEY-----\n${forge.util.encode64(keys.p).match(/.{1,64}/g).join('\n')}\n-----END PUBLIC KEY-----`
-      const publicKey = forge.pki.publicKeyFromPem(pem)
-      
-      const encryptedSessionKey = publicKey.encrypt(sessionKey, 'RSA-OAEP', {
-        md: forge.md.sha256.create()
-      })
-
-      // E. Package for Server
-      // We send a JSON blob containing the encrypted key and the encrypted data
-      const packageBlob = {
-        key: forge.util.encode64(encryptedSessionKey),
-        iv: forge.util.encode64(iv),
-        tag: forge.util.encode64(tag),
-        data: forge.util.encode64(encryptedData)
-      }
-
-      await supabase.from('responses').insert({ form_id: id, response: packageBlob })
-      
-      alert('Encrypted response submitted successfully!')
-      // Reset or redirect
-      setAnswers({})
-      setIndex(0)
-      
-    } catch (e) {
-      console.error(e)
-      alert('Encryption Error: ' + e.message)
-    }
-  }
-
-  // --- RENDERERS ---
-  const handleNext = () => {
+  const handleNext = async () => {
     const q = questions[index]
     const val = answers[q.id]
-    
-    // Simple Validation
-    if (q.required && !['title','info','consent'].includes(q.question_type)) {
-      if (!val || (Array.isArray(val) && val.length === 0)) { 
-        alert('Please complete this field.'); return 
+
+    if (q.required) {
+      if (!val || (typeof val === 'string' && !val.trim())) {
+        alert('Please fill this out')
+        return
+      }
+      if (q.question_type === 'checkbox' && (!val || val.length === 0)) {
+         alert('Please select at least one option'); return;
+      }
+    }
+
+    if (val) {
+      if (q.question_type === 'email') {
+        const re = /[^@]+@[^@]+\.[^@]+/
+        if (!re.test(val)) { alert('Please enter a valid email address'); return; }
+      }
+      if (q.question_type === 'phone') {
+        const re = /^[\+]?[(]?[0-9]{3}[)]?[-\s\.]?[0-9]{3}[-\s\.]?[0-9]{4,6}$/
+        if (!re.test(val) && val.length < 7) { alert('Please enter a valid phone number'); return; }
+      }
+      if (q.question_type === 'number') {
+        if (isNaN(val)) { alert('Please enter a valid number'); return; }
       }
     }
 
     if (index < questions.length - 1) {
       setIndex(index + 1)
-      setConsentChecked(false)
     } else {
-      handleSubmit()
+      await supabase.from('responses').insert({
+        form_id: id,
+        response: answers,
+        created_at: new Date().toISOString()
+      })
+      alert('Thank you! Your response has been recorded.')
     }
   }
 
-  if (loading) return <div className="min-h-screen flex items-center justify-center text-slate-500">Decrypting Secure Survey...</div>
-  if (error) return <div className="min-h-screen flex items-center justify-center text-red-600 font-bold p-10 text-center bg-red-50">{error}</div>
-  if (questions.length === 0) return <div className="min-h-screen flex items-center justify-center">No questions found.</div>
+  const handleBack = () => {
+    if (index > 0) setIndex(index - 1)
+  }
+
+  const handleKeyDown = (e) => {
+    if (e.key === 'Enter') {
+      e.preventDefault()
+      handleNext()
+    }
+  }
+
+  if (loading) return <div className="p-10 text-center">Loading...</div>
+  if (error) return <div className="p-10 text-center text-red-500">{error}</div>
+  if (questions.length === 0) return <div className="p-10 text-center">This form has no questions.</div>
 
   const q = questions[index]
   const val = answers[q.id]
+  
+  let options = []
+  try {
+    options = typeof q.options === 'string' ? JSON.parse(q.options) : q.options
+  } catch (e) { options = [] }
 
   return (
-    <div className="min-h-screen bg-slate-50 font-sans text-slate-900 selection:bg-blue-100 flex flex-col items-center">
+    <div className="min-h-screen bg-gray-50 flex flex-col items-center justify-center p-4 font-sans text-gray-800">
       
-      {/* Progress Bar */}
-      <div className="w-full h-1 bg-slate-200 fixed top-0 z-50">
-        <div className="h-full bg-blue-600 transition-all duration-500 ease-out" style={{ width: `${((index + 1) / questions.length) * 100}%` }} />
+      <div className="fixed top-0 left-0 w-full h-2 bg-gray-200">
+        <div 
+          className="h-full bg-blue-600 transition-all duration-300"
+          style={{ width: `${((index + 1) / questions.length) * 100}%` }}
+        />
       </div>
 
-      <div className="w-full max-w-2xl px-6 py-20 flex-grow flex flex-col justify-center">
+      <div className="w-full max-w-2xl bg-transparent">
         
-        {/* Secure Badge */}
-        <div className="mb-8 flex justify-center">
-          <span className="bg-green-100 text-green-700 text-xs font-bold px-3 py-1 rounded-full flex items-center gap-1 uppercase tracking-wide border border-green-200">
-            🔒 End-to-End Encrypted
-          </span>
-        </div>
-
-        {/* Question Title */}
-        <h1 className="text-3xl md:text-4xl font-bold mb-4 text-center leading-tight">
+        <h1 className="text-3xl font-light mb-2 text-gray-900">
+          <span className="text-sm font-bold text-gray-400 mr-2">{index + 1} &rarr;</span>
           {q.question_text}
-          {q.required && <span className="text-red-500 ml-1 text-2xl">*</span>}
+          {q.required && <span className="text-red-500 ml-1">*</span>}
         </h1>
-
-        {/* Description */}
+        
         {q.description && (
-          <p className="text-lg text-slate-500 mb-10 text-center whitespace-pre-wrap max-w-lg mx-auto">{q.description}</p>
+          <p className="text-lg text-gray-500 mb-8 whitespace-pre-wrap">{q.description}</p>
         )}
 
-        {/* Input Area */}
-        <div className="w-full">
+        <div className="mb-10">
           
-          {/* TEXT / EMAIL / PHONE */}
           {['text', 'email', 'phone', 'number'].includes(q.question_type) && (
-            <input 
-              type={q.question_type === 'number' ? 'tel' : 'text'} 
-              className="w-full bg-transparent border-b-2 border-slate-300 text-3xl py-4 focus:outline-none focus:border-blue-600 transition-colors text-center placeholder-slate-300" 
-              placeholder="Type your answer..." 
+            <input
+              type={q.question_type === 'number' ? 'text' : q.question_type}
+              inputMode={q.question_type === 'number' ? 'numeric' : 'text'}
+              className="w-full bg-transparent border-b-2 border-blue-200 text-3xl py-2 focus:outline-none focus:border-blue-600 text-blue-800 placeholder-gray-300"
+              placeholder="Type your answer..."
+              value={val || ''}
+              onChange={(e) => setAnswers({ ...answers, [q.id]: e.target.value })}
+              onKeyDown={handleKeyDown}
               autoFocus
-              value={val || ''} 
-              onChange={(e) => setAnswers({ ...answers, [q.id]: e.target.value })} 
-              onKeyDown={(e) => e.key === 'Enter' && handleNext()}
             />
           )}
 
-          {/* LONG TEXT */}
           {q.question_type === 'long_text' && (
-            <textarea 
-              className="w-full p-4 text-xl border-2 border-slate-200 rounded-xl focus:outline-none focus:border-blue-600 focus:ring-4 focus:ring-blue-50 transition-all min-h-[150px] resize-none" 
-              placeholder="Type here..."
+            <textarea
+              className="w-full bg-transparent border-2 border-blue-200 rounded-md text-xl p-4 focus:outline-none focus:border-blue-600 text-blue-800"
+              rows={4}
+              placeholder="Type your answer here..."
+              value={val || ''}
+              onChange={(e) => setAnswers({ ...answers, [q.id]: e.target.value })}
               autoFocus
-              value={val || ''} 
-              onChange={(e) => setAnswers({ ...answers, [q.id]: e.target.value })} 
             />
           )}
 
-          {/* CHOICES */}
           {['single_choice', 'yes_no'].includes(q.question_type) && (
             <div className="space-y-3">
-              {(q.question_type === 'yes_no' ? ['Yes', 'No'] : q.options).map((opt, i) => (
-                <button 
-                  key={i} 
-                  onClick={() => setAnswers({ ...answers, [q.id]: opt })} 
-                  className={`w-full text-left p-5 rounded-xl border-2 text-lg font-medium transition-all transform active:scale-[0.99] ${
+              {(q.question_type === 'yes_no' ? ['Yes', 'No'] : options).map((opt, i) => (
+                <button
+                  key={i}
+                  onClick={() => setAnswers({ ...answers, [q.id]: opt })}
+                  className={`block w-full text-left p-4 rounded-md border text-lg transition-all ${
                     val === opt 
-                      ? 'border-blue-600 bg-blue-50 text-blue-700 shadow-sm ring-2 ring-blue-100' 
-                      : 'border-slate-200 bg-white hover:border-blue-300 hover:bg-slate-50'
+                      ? 'bg-blue-600 text-white border-blue-600' 
+                      : 'bg-white border-gray-200 text-gray-700 hover:bg-gray-50'
                   }`}
                 >
-                  <span className="mr-3 text-slate-400 font-normal border border-slate-200 rounded px-2 py-0.5 text-sm">{String.fromCharCode(65 + i)}</span>
+                  <span className="font-bold mr-4 opacity-50">{String.fromCharCode(65 + i)}</span>
                   {opt}
                 </button>
               ))}
             </div>
           )}
 
-          {/* CHECKBOXES */}
           {q.question_type === 'checkbox' && (
              <div className="space-y-3">
-               {q.options.map((opt, i) => {
-                 const curr = val ? JSON.parse(val) : []
-                 const checked = curr.includes(opt)
+               {options.map((opt, i) => {
+                 const current = val ? val.split(',') : []
+                 const checked = current.includes(opt)
                  return (
-                   <label key={i} className={`flex items-center w-full p-5 rounded-xl border-2 cursor-pointer transition-all ${checked ? 'border-blue-600 bg-blue-50 ring-2 ring-blue-100' : 'border-slate-200 bg-white hover:bg-slate-50'}`}>
-                     <div className={`w-6 h-6 mr-4 border-2 rounded flex items-center justify-center transition-colors ${checked ? 'bg-blue-600 border-blue-600' : 'border-slate-300 bg-white'}`}>
-                       {checked && <span className="text-white font-bold text-sm">✓</span>}
-                     </div>
+                   <label key={i} className={`flex items-center w-full p-4 rounded-md border cursor-pointer text-lg ${checked ? 'bg-blue-50 border-blue-500' : 'bg-white border-gray-200'}`}>
                      <input 
-                        type="checkbox" 
-                        className="hidden"
-                        checked={checked} 
-                        onChange={(e) => { 
-                          let newSel = [...curr]
-                          if (e.target.checked) newSel.push(opt)
-                          else newSel = newSel.filter(x => x !== opt)
-                          setAnswers({ ...answers, [q.id]: JSON.stringify(newSel) }) 
-                        }} 
-                      />
-                     <span className={`text-lg font-medium ${checked ? 'text-blue-700' : 'text-slate-700'}`}>{opt}</span>
+                       type="checkbox" 
+                       className="w-5 h-5 mr-4 accent-blue-600"
+                       checked={checked}
+                       onChange={(e) => {
+                         let newSel = [...current]
+                         if (e.target.checked) newSel.push(opt)
+                         else newSel = newSel.filter(x => x !== opt)
+                         setAnswers({ ...answers, [q.id]: newSel.join(',') })
+                       }}
+                     />
+                     {opt}
                    </label>
                  )
                })}
              </div>
           )}
 
-          {/* SLIDER / RATING */}
-          {['slider', 'rating'].includes(q.question_type) && (
-             <div className="py-8 bg-white p-8 rounded-xl border border-slate-200 shadow-sm">
-               <div className="text-center text-6xl font-black text-blue-600 mb-8 font-mono">
-                  {val || 5}
-               </div>
-               <input 
-                  type="range" 
-                  min={1} max={10} 
-                  value={val || 5} 
-                  onChange={(e) => setAnswers({ ...answers, [q.id]: e.target.value })} 
-                  className="w-full h-3 bg-slate-200 rounded-lg appearance-none cursor-pointer accent-blue-600" 
-                />
-               <div className="flex justify-between mt-4 text-slate-400 text-sm font-bold uppercase tracking-wider">
-                 <span>Low (1)</span>
-                 <span>High (10)</span>
-               </div>
-             </div>
-          )}
-
-          {/* CONSENT */}
-          {q.question_type === 'consent' && (
-             <label className={`flex items-start p-6 border-2 rounded-xl cursor-pointer transition-all ${consentChecked ? 'border-green-500 bg-green-50 ring-2 ring-green-100' : 'border-slate-300 hover:border-slate-400'}`}>
-               <div className={`mt-1 w-6 h-6 mr-4 border-2 rounded flex items-center justify-center transition-colors ${consentChecked ? 'bg-green-600 border-green-600' : 'border-slate-300 bg-white'}`}>
-                  {consentChecked && <span className="text-white font-bold text-sm">✓</span>}
-               </div>
-               <input 
-                  type="checkbox" 
-                  className="hidden"
-                  checked={consentChecked} 
-                  onChange={(e) => {
-                    setConsentChecked(e.target.checked)
-                    setAnswers({ ...answers, [q.id]: e.target.checked ? "Agreed" : "" })
-                  }} 
-                />
-               <div className="flex-1">
-                 <span className="text-lg font-bold text-slate-900 block mb-1">I Agree</span>
-                 <span className="text-slate-500">I have read and accept the terms and conditions outlined in the previous slides.</span>
-               </div>
-             </label>
-          )}
-
-          {/* DROPDOWN */}
           {q.question_type === 'dropdown' && (
-            <div className="relative">
-              <select 
-                className="w-full p-4 text-xl border-2 border-slate-200 rounded-xl focus:outline-none focus:border-blue-600 appearance-none bg-white"
-                value={val || ''}
+            <select 
+              className="w-full p-4 text-xl border rounded-md bg-white focus:outline-none focus:border-blue-600"
+              value={val || ''}
+              onChange={(e) => setAnswers({ ...answers, [q.id]: e.target.value })}
+            >
+              <option value="">Select an option...</option>
+              {options.map((opt, i) => <option key={i} value={opt}>{opt}</option>)}
+            </select>
+          )}
+
+          {q.question_type === 'rating' && (
+            <div className="flex gap-4 flex-wrap">
+              {Array.from({ length: (options.max || 5) - (options.min || 1) + 1 }, (_, i) => i + (options.min || 1)).map(num => (
+                <button
+                  key={num}
+                  onClick={() => setAnswers({ ...answers, [q.id]: String(num) })}
+                  className={`w-14 h-14 rounded-lg border-2 text-xl font-bold transition-all ${
+                    val === String(num) ? 'bg-blue-600 text-white border-blue-600' : 'bg-white border-gray-200 text-gray-600 hover:border-blue-400'
+                  }`}
+                >
+                  {num}
+                </button>
+              ))}
+            </div>
+          )}
+
+          {q.question_type === 'slider' && (
+            <div className="pt-8 px-2">
+              <div className="text-center text-4xl font-bold text-blue-700 mb-4">{val || options.min || 0}</div>
+              <input 
+                type="range" 
+                min={options.min || 0} 
+                max={options.max || 10} 
+                value={val || options.min || 0}
                 onChange={(e) => setAnswers({ ...answers, [q.id]: e.target.value })}
-              >
-                <option value="">Select an option...</option>
-                {q.options.map((opt, i) => (
-                  <option key={i} value={opt}>{opt}</option>
-                ))}
-              </select>
-              <div className="absolute right-4 top-1/2 transform -translate-y-1/2 pointer-events-none text-slate-500">▼</div>
+                className="w-full h-2 bg-gray-200 rounded-lg appearance-none cursor-pointer accent-blue-600"
+              />
+              <div className="flex justify-between text-gray-400 mt-2">
+                <span>{options.min || 0}</span>
+                <span>{options.max || 10}</span>
+              </div>
+            </div>
+          )}
+
+          {q.question_type === 'date' && (
+            <input 
+              type="date"
+              className="w-full p-4 text-xl border rounded-md bg-white focus:outline-none focus:border-blue-600"
+              value={val || ''}
+              onChange={(e) => setAnswers({ ...answers, [q.id]: e.target.value })}
+            />
+          )}
+
+          {q.question_type === 'contact_info' && (
+            <div className="space-y-4">
+              {['name', 'email', 'phone', 'company'].map(field => {
+                 const currentObj = val ? JSON.parse(val) : {}
+                 return (
+                   <div key={field} className="flex flex-col">
+                     <label className="text-xs font-bold uppercase text-gray-500 mb-1">{field}</label>
+                     <input 
+                       type={field === 'email' ? 'email' : 'text'}
+                       className="p-3 border rounded-md focus:border-blue-600 outline-none"
+                       placeholder={`Enter ${field}...`}
+                       value={currentObj[field] || ''}
+                       onChange={(e) => {
+                         const newObj = { ...currentObj, [field]: e.target.value }
+                         setAnswers({ ...answers, [q.id]: JSON.stringify(newObj) })
+                       }}
+                     />
+                   </div>
+                 )
+              })}
+            </div>
+          )}
+
+           {q.question_type === 'address' && (
+            <div className="space-y-4">
+              {['street', 'city', 'zip', 'country'].map(field => {
+                 const currentObj = val ? JSON.parse(val) : {}
+                 return (
+                   <div key={field} className="flex flex-col">
+                     <label className="text-xs font-bold uppercase text-gray-500 mb-1">{field}</label>
+                     <input 
+                       type="text"
+                       className="p-3 border rounded-md focus:border-blue-600 outline-none"
+                       placeholder={`Enter ${field}...`}
+                       value={currentObj[field] || ''}
+                       onChange={(e) => {
+                         const newObj = { ...currentObj, [field]: e.target.value }
+                         setAnswers({ ...answers, [q.id]: JSON.stringify(newObj) })
+                       }}
+                     />
+                   </div>
+                 )
+              })}
             </div>
           )}
 
         </div>
 
-        {/* Navigation */}
-        <div className="flex justify-between items-center mt-12">
-           <button 
-              onClick={() => index > 0 && setIndex(index-1)} 
-              className={`text-slate-400 hover:text-slate-600 font-bold px-6 py-3 transition-colors ${index === 0 ? 'invisible' : ''}`}
+        <div className="flex justify-between items-center mt-8">
+          {index > 0 ? (
+            <button 
+              onClick={handleBack} 
+              className="text-gray-500 hover:text-gray-800 font-medium px-4 py-2"
             >
               Back
-           </button>
-           
-           <button 
-              onClick={handleNext} 
-              disabled={q.question_type === 'consent' && !consentChecked}
-              className={`text-white text-lg font-bold py-4 px-10 rounded-xl shadow-lg transition-all transform active:scale-95 ${
-                q.question_type === 'consent' && !consentChecked 
-                  ? 'bg-slate-300 cursor-not-allowed shadow-none' 
-                  : 'bg-blue-600 hover:bg-blue-700 hover:shadow-xl hover:-translate-y-1'
-              }`}
-            >
-              {index < questions.length - 1 ? (q.button_text || 'Next') : 'Submit Securely'}
-           </button>
+            </button>
+          ) : <div></div>}
+          
+          <button 
+            onClick={handleNext}
+            className="bg-blue-700 hover:bg-blue-800 text-white text-xl font-bold py-3 px-8 rounded-lg shadow-lg transition-transform transform active:scale-95"
+          >
+            {index < questions.length - 1 ? (q.button_text || 'OK') : 'Submit'}
+          </button>
         </div>
 
       </div>
-      
-      {/* Footer Branding */}
-      <div className="fixed bottom-6 text-slate-300 text-sm font-medium">
-        Powered by SlideForm Secure
-      </div>
-
     </div>
   )
 }
