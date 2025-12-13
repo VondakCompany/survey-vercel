@@ -8,8 +8,6 @@ import { useRouter } from 'next/router';
 const SUPABASE_URL = "https://xrgrlfpjeovjeshebxya.supabase.co";
 const SUPABASE_KEY = "sb_publishable_TgJkb2-QML1h1aOAYAVupg_njoyLImS"; 
 
-// Initialize Client with explicit fallbacks
-// This ensures the build process NEVER receives 'undefined'
 const supabase = createClient(
   SUPABASE_URL || "https://placeholder.supabase.co", 
   SUPABASE_KEY || "placeholder-key"
@@ -26,8 +24,7 @@ export default function FormRunner() {
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [isFinished, setIsFinished] = useState(false);
   
-  // For animations
-  const [direction, setDirection] = useState(1); // 1 = forward, -1 = back
+  const [direction, setDirection] = useState(1); 
 
   // Load Data
   useEffect(() => {
@@ -41,9 +38,11 @@ export default function FormRunner() {
           .eq('form_id', id)
           .order('order', { ascending: true });
         
-        // Parse options if they are strings
+        // --- FIX IS HERE ---
+        // We map 'question_type' (from DB) to 'type' (used by UI)
         const parsedQuestions = (qData || []).map(q => ({
           ...q,
+          type: q.question_type, // <--- CRITICAL FIX
           options: typeof q.options === 'string' ? JSON.parse(q.options) : q.options
         }));
 
@@ -59,12 +58,9 @@ export default function FormRunner() {
     const handleKeyDown = (e) => {
       if (e.key === 'Enter' && !e.shiftKey) {
         const currentQ = questions[currentIndex];
-        // Prevent default only for non-textarea inputs to avoid blocking new lines
         if (currentQ && currentQ.type !== 'text') { 
            e.preventDefault(); 
            goNext();
-        } else if (currentQ && currentQ.type === 'text') {
-           // Allow natural Enter behavior for text inputs (or specific logic)
         }
       }
     };
@@ -80,7 +76,6 @@ export default function FormRunner() {
 
   const goNext = () => {
     const currentQ = questions[currentIndex];
-    // Basic validation
     if (currentQ.required && !answers[currentQ.id]) {
       alert("Please fill this out");
       return;
@@ -119,18 +114,16 @@ export default function FormRunner() {
 
   return (
     <div style={styles.container}>
-      {/* Progress Bar */}
       <div style={styles.progressBarBg}>
         <div style={{...styles.progressBarFill, width: `${progress}%`}}></div>
       </div>
 
-      {/* Question Card */}
       <div style={styles.card}>
         <h2 style={styles.questionText}>
           <span style={styles.number}>{currentIndex + 1} &rarr;</span> {q.question_text}
         </h2>
+        {q.description && <p style={styles.description}>{q.description}</p>}
         
-        {/* Input Renderer */}
         <div style={styles.inputContainer}>
           {q.type === 'text' && (
             <input 
@@ -182,19 +175,17 @@ export default function FormRunner() {
           )}
         </div>
 
-        {/* Navigation */}
         <div style={styles.nav}>
           {currentIndex > 0 && (
             <button onClick={goBack} style={styles.navBtn}>Back</button>
           )}
           <button onClick={goNext} style={styles.primaryBtn}>
-            {currentIndex === questions.length - 1 ? 'Submit' : 'Next'}
+            {currentIndex === questions.length - 1 ? 'Submit' : (q.button_text || 'Next')}
           </button>
           <span style={styles.hint}>press <strong>Enter ↵</strong></span>
         </div>
       </div>
       
-      {/* Background Brand */}
       <div style={styles.brand}>Powered by SlideForm</div>
     </div>
   );
@@ -206,7 +197,8 @@ const styles = {
   progressBarBg: { position: 'fixed', top: 0, left: 0, right: 0, height: '4px', backgroundColor: '#eee' },
   progressBarFill: { height: '100%', backgroundColor: '#0445AF', transition: 'width 0.5s ease' },
   card: { width: '100%', maxWidth: '700px', padding: '20px', animation: 'fadeIn 0.5s' },
-  questionText: { fontSize: '24px', fontWeight: '300', marginBottom: '32px' },
+  questionText: { fontSize: '24px', fontWeight: '300', marginBottom: '10px' },
+  description: { fontSize: '16px', color: '#666', marginBottom: '32px' },
   number: { color: '#0445AF', fontWeight: 'bold', marginRight: '8px' },
   inputContainer: { marginBottom: '40px' },
   textInput: { width: '100%', fontSize: '24px', border: 'none', borderBottom: '1px solid #ccc', padding: '10px 0', outline: 'none', background: 'transparent', transition: 'border-color 0.3s' },
