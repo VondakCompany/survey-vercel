@@ -11,8 +11,8 @@ const SUPABASE_KEY = "sb_publishable_TgJkb2-QML1h1aOAYAVupg_njoyLImS";
 // Initialize Client with explicit fallbacks
 // This ensures the build process NEVER receives 'undefined'
 const supabase = createClient(
-  "https://xrgrlfpjeovjeshebxya.supabase.co",
-  "sb_publishable_TgJkb2-QML1h1aOAYAVupg_njoyLImS" 
+  SUPABASE_URL || "https://placeholder.supabase.co", 
+  SUPABASE_KEY || "placeholder-key"
 );
 
 export default function FormRunner() {
