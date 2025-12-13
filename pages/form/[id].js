@@ -21,7 +21,6 @@ export default function FormRunner() {
   useEffect(() => {
     if (!id) return;
     const loadData = async () => {
-      // 1. Get Questions
       const { data: qData, error } = await supabase
         .from('questions')
         .select('*')
@@ -30,10 +29,9 @@ export default function FormRunner() {
 
       if (error) console.error("Error loading questions:", error);
 
-      // 2. Map 'question_type' -> 'type' and parse options
       const parsed = (qData || []).map(q => ({
         ...q,
-        type: q.question_type, // Map DB column to UI property
+        type: q.question_type,
         options: typeof q.options === 'string' ? JSON.parse(q.options) : q.options
       }));
 
@@ -43,11 +41,9 @@ export default function FormRunner() {
     loadData();
   }, [id]);
 
-  // Keyboard navigation
   useEffect(() => {
     const handleKey = (e) => {
       if (e.key === 'Enter' && !e.shiftKey) {
-        // Only auto-advance if it's NOT a textarea (textareas need Enter for new lines)
         if (questions[currentIndex]?.type !== 'text') {
            e.preventDefault();
            goNext();
@@ -83,18 +79,14 @@ export default function FormRunner() {
 
   const submitForm = async () => {
     try {
-      // Send data to Supabase
       const { error } = await supabase.from('responses').insert({
         form_id: id,
-        response: answers // Make sure your DB column is JSONB type
+        response: answers
       });
-      
       if (error) throw error;
       setIsFinished(true);
-
     } catch (err) {
       alert("Submission failed: " + err.message);
-      console.error(err);
     }
   };
 
@@ -107,15 +99,12 @@ export default function FormRunner() {
 
   return (
     <div style={styles.container}>
-      {/* Progress Bar (Fixed Top) */}
       <div style={styles.progressContainer}>
         <div style={{...styles.progressFill, width: `${progress}%`}}></div>
       </div>
 
-      {/* Main Stage */}
       <div style={styles.stage}>
         <div style={styles.content}>
-          
           <h1 style={styles.questionText}>
             <span style={styles.number}>{currentIndex + 1} &rarr;</span>
             {q.question_text}
@@ -183,7 +172,6 @@ export default function FormRunner() {
               {currentIndex === questions.length - 1 ? 'Submit' : (q.button_text || 'OK')} 
             </button>
           </div>
-
         </div>
       </div>
       
@@ -192,7 +180,6 @@ export default function FormRunner() {
   );
 }
 
-// FULL SCALE STYLES (Typeform-like)
 const styles = {
   container: { 
     fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif', 
@@ -205,14 +192,12 @@ const styles = {
   center: { 
     display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', height: '100vh', fontSize: '1.2rem', color: '#666' 
   },
-  // Sticky Progress Bar
   progressContainer: { 
     position: 'fixed', top: 0, left: 0, right: 0, height: '6px', backgroundColor: '#E5E5E5', zIndex: 9999 
   },
   progressFill: { 
     height: '100%', backgroundColor: '#0445AF', transition: 'width 0.4s ease' 
   },
-  // Full Scale Stage
   stage: { 
     flex: 1, 
     display: 'flex', 
@@ -223,30 +208,28 @@ const styles = {
   },
   content: { 
     width: '100%', 
-    maxWidth: '900px', // Much wider now
+    maxWidth: '720px', // FIXED: Tighter width prevents "stretched" look
   },
   questionText: { 
-    fontSize: '32px', // Larger font
+    fontSize: '28px', 
     fontWeight: '300', 
     marginBottom: '16px',
     lineHeight: '1.3'
   },
   number: { 
-    color: '#0445AF', fontWeight: '600', marginRight: '12px', fontSize: '24px', verticalAlign: 'middle'
+    color: '#0445AF', fontWeight: '600', marginRight: '12px', fontSize: '24px'
   },
   desc: {
-    fontSize: '20px',
+    fontSize: '18px',
     color: 'rgba(38, 38, 39, 0.7)',
     fontWeight: 'normal',
-    marginBottom: '40px',
-    marginTop: '-10px'
+    marginBottom: '32px',
+    marginTop: '-8px'
   },
   inputArea: { marginBottom: '40px' },
-  
-  // Inputs
   textInput: { 
     width: '100%', 
-    fontSize: '30px', 
+    fontSize: '28px', 
     border: 'none', 
     borderBottom: '2px solid rgba(4, 69, 175, 0.3)', 
     padding: '10px 0', 
@@ -255,17 +238,17 @@ const styles = {
     color: '#0445AF'
   },
   choiceGrid: { 
-    display: 'flex', flexDirection: 'column', gap: '12px', maxWidth: '500px' // Restrain width of buttons slightly for readability
+    display: 'flex', flexDirection: 'column', gap: '10px', maxWidth: '100%' 
   },
   choiceBtn: { 
-    textAlign: 'left', padding: '16px 20px', fontSize: '20px', 
+    textAlign: 'left', padding: '12px 16px', fontSize: '18px', 
     border: '1px solid rgba(4, 69, 175, 0.3)', 
     backgroundColor: 'rgba(255,255,255,0.8)', 
     color: '#0445AF', borderRadius: '4px', cursor: 'pointer', transition: 'all 0.2s ease',
     display: 'flex', alignItems: 'center'
   },
   choiceBtnActive: { 
-    textAlign: 'left', padding: '16px 20px', fontSize: '20px', 
+    textAlign: 'left', padding: '12px 16px', fontSize: '18px', 
     border: '1px solid #0445AF', backgroundColor: '#0445AF', 
     color: 'white', borderRadius: '4px', cursor: 'pointer',
     display: 'flex', alignItems: 'center'
@@ -274,25 +257,22 @@ const styles = {
     border: '1px solid currentColor', borderRadius: '3px', width: '24px', height: '24px', 
     display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '14px', marginRight: '15px', opacity: 0.7 
   },
-  
   ratingRow: { display: 'flex', gap: '10px' },
   ratingBtn: { 
-    width: '60px', height: '60px', fontSize: '24px', 
+    width: '50px', height: '50px', fontSize: '20px', 
     border: '1px solid #ccc', backgroundColor: 'white', cursor: 'pointer', borderRadius: '4px' 
   },
   ratingBtnActive: { 
-    width: '60px', height: '60px', fontSize: '24px', 
+    width: '50px', height: '50px', fontSize: '20px', 
     border: '1px solid #0445AF', backgroundColor: '#0445AF', color: 'white', cursor: 'pointer', borderRadius: '4px' 
   },
-  
-  // Nav
-  navBar: { display: 'flex', gap: '20px', marginTop: '50px' },
+  navBar: { display: 'flex', gap: '20px', marginTop: '40px' },
   nextBtn: { 
-    padding: '12px 32px', fontSize: '20px', fontWeight: 'bold', 
+    padding: '10px 28px', fontSize: '18px', fontWeight: 'bold', 
     backgroundColor: '#0445AF', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer' 
   },
   backBtn: { 
-    padding: '12px 24px', fontSize: '18px', 
+    padding: '10px 20px', fontSize: '16px', 
     backgroundColor: 'transparent', color: '#666', border: 'none', cursor: 'pointer' 
   },
   branding: { 
