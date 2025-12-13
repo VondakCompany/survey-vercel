@@ -2,55 +2,62 @@ import Link from 'next/link'
 
 export default function Home() {
   return (
-    <div className="min-h-screen bg-white font-sans text-gray-900">
-      {/* Navbar */}
-      <nav className="flex justify-between items-center p-6 max-w-7xl mx-auto">
-        <div className="text-2xl font-bold text-blue-700">SlideForm</div>
-        <div className="space-x-4">
-          <Link href="/login" className="text-gray-600 hover:text-gray-900 font-medium">Log in</Link>
-          <Link href="/register" className="bg-blue-600 text-white px-5 py-2 rounded-full font-medium hover:bg-blue-700 transition">Sign up</Link>
+    <div className="min-h-screen bg-white font-sans text-slate-900 selection:bg-blue-100">
+      
+      {/* Navigation */}
+      <nav className="max-w-7xl mx-auto px-6 h-20 flex justify-between items-center">
+        <div className="text-2xl font-extrabold tracking-tight text-blue-700">SlideForm</div>
+        <div className="flex items-center space-x-6">
+          <Link href="/login" className="text-sm font-semibold text-slate-600 hover:text-blue-600 transition">Sign in</Link>
+          <Link href="/register" className="bg-slate-900 text-white text-sm font-bold py-2.5 px-5 rounded-full hover:bg-slate-800 transition shadow-lg hover:shadow-xl transform hover:-translate-y-0.5">
+            Get Started
+          </Link>
         </div>
       </nav>
 
       {/* Hero Section */}
-      <main className="flex flex-col items-center justify-center text-center mt-20 px-4">
-        <h1 className="text-5xl sm:text-6xl font-extrabold tracking-tight mb-6 max-w-4xl">
-          Secure, Encrypted Surveys <br/>
-          <span className="text-blue-600">Simplified.</span>
+      <main className="mt-20 sm:mt-32 px-6 text-center max-w-5xl mx-auto pb-20">
+        <div className="inline-block px-4 py-1.5 mb-6 rounded-full bg-blue-50 text-blue-700 text-sm font-bold tracking-wide uppercase border border-blue-100">
+          Beta Release v1.0
+        </div>
+        
+        <h1 className="text-5xl sm:text-7xl font-black tracking-tight text-slate-900 mb-8 leading-tight">
+          Surveys, <span className="text-transparent bg-clip-text bg-gradient-to-r from-blue-600 to-indigo-600">Encrypted.</span>
         </h1>
-        <p className="text-xl text-gray-500 mb-10 max-w-2xl">
-          Build professional forms with end-to-end encryption. 
-          Manage your data securely on your local device with cloud syncing capabilities.
+        
+        <p className="text-xl sm:text-2xl text-slate-500 mb-12 max-w-2xl mx-auto leading-relaxed">
+          The professional slide-based form builder that secures your data on your device before it ever touches the cloud.
         </p>
         
-        <div className="flex flex-col sm:flex-row gap-4">
-          <Link href="/register" className="bg-blue-600 text-white text-lg font-bold py-4 px-10 rounded-lg hover:bg-blue-700 shadow-lg transition transform active:scale-95">
-            Get Started for Free
+        <div className="flex flex-col sm:flex-row justify-center gap-4">
+          <Link href="/register" className="bg-blue-600 text-white text-lg font-bold py-4 px-10 rounded-xl hover:bg-blue-700 shadow-xl shadow-blue-200 transition-all transform hover:-translate-y-1">
+            Create Free Account
           </Link>
-          <Link href="/login" className="bg-gray-100 text-gray-700 text-lg font-bold py-4 px-10 rounded-lg hover:bg-gray-200 transition">
-            Access Dashboard
-          </Link>
+          <a href="#" className="bg-white text-slate-700 text-lg font-bold py-4 px-10 rounded-xl border border-slate-200 hover:border-slate-300 hover:bg-slate-50 transition-all">
+            Download App
+          </a>
         </div>
 
-        {/* Feature Grid */}
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-8 mt-24 max-w-6xl w-full px-4 mb-20">
-          <div className="p-8 border border-gray-100 rounded-xl shadow-sm bg-gray-50">
-            <div className="text-4xl mb-4">🔒</div>
-            <h3 className="text-xl font-bold mb-2">E2E Encryption</h3>
-            <p className="text-gray-600">Your data is encrypted on your device before it ever touches the cloud.</p>
-          </div>
-          <div className="p-8 border border-gray-100 rounded-xl shadow-sm bg-gray-50">
-            <div className="text-4xl mb-4">🎨</div>
-            <h3 className="text-xl font-bold mb-2">Modern Builder</h3>
-            <p className="text-gray-600">Create beautiful slide-based forms with Title, Consent, and Info slides.</p>
-          </div>
-          <div className="p-8 border border-gray-100 rounded-xl shadow-sm bg-gray-50">
-            <div className="text-4xl mb-4">⚡</div>
-            <h3 className="text-xl font-bold mb-2">Instant Sync</h3>
-            <p className="text-gray-600">Publish your local forms to the web instantly with one click.</p>
-          </div>
+        {/* Feature Pill */}
+        <div className="mt-24 grid grid-cols-1 sm:grid-cols-3 gap-8 text-left">
+          {[
+            { icon: "🔒", title: "End-to-End Encryption", desc: "Data is encrypted locally using AES-256." },
+            { icon: "⚡", title: "Instant Sync", desc: "Push updates from desktop to web in seconds." },
+            { icon: "💎", title: "Premium UX", desc: "Slide-based interface that respondents love." }
+          ].map((f, i) => (
+            <div key={i} className="p-6 rounded-2xl bg-slate-50 border border-slate-100 hover:border-blue-100 transition-colors">
+              <div className="text-3xl mb-4">{f.icon}</div>
+              <h3 className="font-bold text-lg text-slate-900 mb-2">{f.title}</h3>
+              <p className="text-slate-500 leading-relaxed">{f.desc}</p>
+            </div>
+          ))}
         </div>
       </main>
+      
+      {/* Simple Footer */}
+      <footer className="border-t border-slate-100 py-10 text-center text-slate-400 text-sm">
+        &copy; {new Date().getFullYear()} SlideForm Inc. All rights reserved.
+      </footer>
     </div>
   )
 }
