@@ -12,7 +12,7 @@ const supabase = createClient(SUPABASE_URL, SUPABASE_KEY)
 
 // ------------------------------------------------------------------
 // THEME ENGINE
-// These definitions match the Python backend exactly.
+// Matches Python 'THEMES' dictionary exactly.
 // ------------------------------------------------------------------
 const THEMES = {
   pro: {
@@ -20,11 +20,11 @@ const THEMES = {
     bg: "#FFFFFF",
     cardBg: "#FFFFFF",
     text: "#1A1A1A",
-    accent: "#0445AF", // Deep Blue
-    border: "#A3D5FF", // Light Blue Underline
-    radius: "0px",
+    accent: "#0445AF",      // Deep Typeform Blue
+    border: "#A3D5FF",      // Light Blue for Underlines
+    radius: "0px",          // Sharp corners
     btnText: "#FFFFFF",
-    shadow: "none",
+    shadow: "none",         // Flat design
     inputStyle: "underline",
     align: "left",
     numberStyle: "arrow",
@@ -35,9 +35,9 @@ const THEMES = {
     bg: "#F8FAFC",
     cardBg: "#FFFFFF",
     text: "#1E293B",
-    accent: "#2563EB", // Bright Blue
+    accent: "#2563EB",      // Bright Blue
     border: "#E2E8F0",
-    radius: "16px",
+    radius: "16px",         // Rounded corners
     btnText: "#FFFFFF",
     shadow: "0 25px 50px -12px rgba(0, 0, 0, 0.15)",
     inputStyle: "box",
@@ -52,78 +52,75 @@ export default function FormPage() {
   const { id } = router.query
   
   // ----------------------------------------------------------------
-  // STATE MANAGEMENT
+  // STATE
   // ----------------------------------------------------------------
   const [questions, setQuestions] = useState([])
   const [index, setIndex] = useState(0)
   const [answers, setAnswers] = useState({})
   const [keys, setKeys] = useState({ q: null, p: null })
-  const [theme, setTheme] = useState(THEMES.pro) // Default to Pro
+  const [theme, setTheme] = useState(THEMES.pro)
   
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
   const [consentChecked, setConsentChecked] = useState(false)
 
   // ----------------------------------------------------------------
-  // 1. INITIALIZATION & DECRYPTION
+  // 1. INITIALIZATION & DATA FETCHING
   // ----------------------------------------------------------------
   useEffect(() => {
     if (!id) return
 
     const initializeForm = async () => {
       try {
-        // A. Parse Secure Keys from URL Hash
-        // URLSearchParams handles the % decoding automatically
-        const hashParams = new URLSearchParams(window.location.hash.substring(1))
-        const qKeyB64 = hashParams.get('q')
-        const pKeyPem = hashParams.get('p')
+        // A. Fetch Encryption Keys from Secure DB Store
+        // We no longer rely on the URL hash for keys to keep links clean.
+        const { data: keyData, error: keyError } = await supabase
+          .from('survey_keys')
+          .select('*')
+          .eq('form_id', id)
+          .single()
 
-        if (!qKeyB64 || !pKeyPem) {
-          throw new Error('MISSING KEYS: This is a secure E2EE form. Please use the full link provided by the builder.')
+        if (keyError || !keyData) {
+          throw new Error("Survey not found or currently unpublished.")
         }
 
-        // B. Decode AES Key
-        const qKey = forge.util.decode64(qKeyB64)
-        setKeys({ q: qKey, p: pKeyPem })
-
-        // C. Fetch Form Metadata (Theme)
-        const { data: formData, error: formError } = await supabase
+        // B. Fetch Theme Metadata
+        const { data: formData } = await supabase
           .from('forms')
           .select('theme')
           .eq('id', id)
           .single()
         
-        if (formError) throw formError
-        
-        // Apply Theme
         if (formData && formData.theme && THEMES[formData.theme]) {
           setTheme(THEMES[formData.theme])
         }
 
+        // C. Decode Keys
+        const qKey = forge.util.decode64(keyData.q_key)
+        setKeys({ q: qKey, p: keyData.p_key })
+
         // D. Fetch Questions
-        const { data: questionData, error: questionError } = await supabase
+        const { data: qData, error: qError } = await supabase
           .from('questions')
           .select('*')
           .eq('form_id', id)
           .order('order')
 
-        if (questionError) throw questionError
+        if (qError) throw qError
 
-        // E. Decrypt Question Content
-        const decryptedQuestions = questionData.map(row => {
-          return {
-            ...row,
-            question_text: decryptAES(row.question_text, qKey),
-            description: decryptAES(row.description, qKey),
-            options: decryptAES(row.options, qKey) || []
-          }
-        })
+        // E. Decrypt Content
+        const decryptedQuestions = qData.map(row => ({
+          ...row,
+          question_text: decryptAES(row.question_text, qKey),
+          description: decryptAES(row.description, qKey),
+          options: decryptAES(row.options, qKey) || []
+        }))
 
         setQuestions(decryptedQuestions)
         setLoading(false)
 
       } catch (e) {
-        console.error("Initialization Error:", e)
+        console.error("Init Error:", e)
         setError(e.message || "Failed to load secure survey.")
         setLoading(false)
       }
@@ -133,13 +130,12 @@ export default function FormPage() {
   }, [id])
 
   // ----------------------------------------------------------------
-  // CRYPTO HELPERS
+  // CRYPTO HELPER (AES-GCM)
   // ----------------------------------------------------------------
   const decryptAES = (b64Cipher, key) => {
     if (!b64Cipher) return ""
     try {
       const raw = forge.util.decode64(b64Cipher)
-      // Extract IV (12 bytes), Tag (16 bytes), Ciphertext (Rest)
       const iv = raw.substring(0, 12)
       const tag = raw.substring(12, 28)
       const ciphertext = raw.substring(28)
@@ -167,26 +163,26 @@ export default function FormPage() {
       // A. Serialize Answers
       const payload = JSON.stringify(answers)
       
-      // B. Generate Ephemeral Session Key
+      // B. Generate Session Key
       const sessionKey = forge.random.getBytesSync(32)
       const iv = forge.random.getBytesSync(12)
 
-      // C. Encrypt Data with Session Key (AES-GCM)
+      // C. Encrypt Payload (AES-GCM)
       const cipher = forge.cipher.createCipher('AES-GCM', sessionKey)
-      cipher.start({ iv: iv })
+      cipher.start({ iv })
       cipher.update(forge.util.createBuffer(payload))
       cipher.finish()
       
       const encryptedData = cipher.output.getBytes()
       const tag = cipher.mode.tag.getBytes()
 
-      // D. Encrypt Session Key with Public Key (RSA-OAEP)
+      // D. Encrypt Session Key (RSA-OAEP)
       const publicKey = forge.pki.publicKeyFromPem(keys.p)
       const encryptedSessionKey = publicKey.encrypt(sessionKey, 'RSA-OAEP', { 
         md: forge.md.sha256.create() 
       })
 
-      // E. Upload Secure Envelope
+      // E. Upload
       const { error: uploadError } = await supabase.from('responses').insert({ 
         form_id: id, 
         response: {
@@ -201,7 +197,7 @@ export default function FormPage() {
       
       alert('Success! Your response has been securely encrypted and submitted.')
       
-      // Reset Form
+      // Reset
       setAnswers({})
       setIndex(0)
       setConsentChecked(false)
@@ -220,24 +216,24 @@ export default function FormPage() {
     const q = questions[index]
     const val = answers[q.id]
     
-    // Check Required Fields
+    // Required Field Check
     if (q.required && !['title', 'info', 'consent'].includes(q.question_type)) {
       
-      // Special validation for Contact Info object
+      // Contact Info Validation
       if (q.question_type === 'contact_info') {
         if (!val || !val['First Name'] || !val['Email']) {
           alert('Please fill in at least your First Name and Email.')
           return
         }
       }
-      // General validation for strings/arrays
+      // General Validation
       else if (!val || (Array.isArray(val) && val.length === 0) || (typeof val === 'string' && val.trim() === '')) { 
-        alert('This question is required. Please provide an answer.')
+        alert('This question is required.')
         return 
       }
     }
 
-    // Check Consent
+    // Consent Check
     if (q.question_type === 'consent' && !consentChecked) {
       alert("You must agree to the terms to continue.")
       return
@@ -252,6 +248,7 @@ export default function FormPage() {
     }
   }
 
+  // Update logic for multi-field contact inputs
   const updateContact = (field, text) => {
     const currentAnswers = answers[questions[index].id] || {}
     setAnswers({ 
@@ -263,31 +260,32 @@ export default function FormPage() {
   // ----------------------------------------------------------------
   // 4. RENDERER
   // ----------------------------------------------------------------
-  if (loading && !questions.length) return <div className="loading-screen">Decrypting Secure Connection...</div>
+  if (loading && !questions.length) return <div className="loading-screen">Loading Secure Survey...</div>
   if (error) return <div className="error-screen">{error}</div>
-  if (!questions.length) return <div className="loading-screen">No questions found for this survey.</div>
+  if (!questions.length) return <div className="loading-screen">No questions found.</div>
 
   const q = questions[index]
   const val = answers[q.id]
 
-  // Calculate CSS variables for the current theme
+  // CSS Variables derived from Theme
   const isPro = theme.inputStyle === 'underline'
   const align = theme.align === 'left' ? 'flex-start' : 'center'
   const textAlign = theme.align === 'left' ? 'left' : 'center'
   
+  // Specific Input Styles
   const inputBorderCSS = isPro 
     ? `border: none; border-bottom: 2px solid ${theme.border}; border-radius: 0; background: transparent; padding: 10px 0;` 
     : `border: 2px solid ${theme.border}; border-radius: ${theme.radius}; background: ${theme.cardBg}; padding: 16px;`
 
-  // Number Prefix (Typeform Arrow)
+  // Number Prefix (The blue arrow)
   const numberPrefix = theme.numberStyle === 'arrow' 
     ? <span className="arrow-prefix">{index + 1} <span style={{fontSize:'0.8em'}}>➜</span></span> 
     : null
 
   return (
     <div className="page-container">
-      {/* GLOBAL CSS 
-          Embedded directly to ensure zero-config styling 
+      {/* FULL GLOBAL CSS 
+          Embedded directly to guarantee the look without external CSS files.
       */}
       <style jsx global>{`
         body { 
@@ -300,11 +298,13 @@ export default function FormPage() {
         
         .page-container { min-height: 100vh; display: flex; flex-direction: column; align-items: center; }
         
+        /* PROGRESS BAR */
         .progress-bar { width: 100%; height: 4px; background: #E5E7EB; position: fixed; top: 0; z-index: 50; }
         .progress-fill { height: 100%; background: ${theme.accent}; transition: width 0.5s ease; }
         
         .content-wrapper { flex-grow: 1; width: 100%; display: flex; justify-content: center; align-items: center; padding: 40px 20px; }
         
+        /* THE MAIN CARD */
         .card {
           background: ${theme.cardBg};
           width: 100%;
@@ -320,11 +320,12 @@ export default function FormPage() {
 
         .badge-container { display: flex; justify-content: center; margin-bottom: 40px; }
         .secure-badge { 
-          background: #DCFCE7; color: #15803D; font-size: 11px; font-weight: 800; 
+          background: #F0FDF4; color: #15803D; font-size: 11px; font-weight: 800; 
           padding: 6px 14px; border-radius: 20px; border: 1px solid #BBF7D0; 
           text-transform: uppercase; letter-spacing: 0.5px;
         }
 
+        /* QUESTION HEADER */
         .question-header { margin-bottom: 40px; }
         .question-title { 
           font-size: 28px; font-weight: 400; color: ${theme.text}; 
@@ -340,14 +341,14 @@ export default function FormPage() {
           margin-top: 8px; font-style: italic; white-space: pre-wrap; 
         }
 
-        /* INPUTS */
+        /* INPUT WRAPPER */
         .input-wrapper { width: 100%; display: flex; flex-direction: column; gap: 30px; max-width: 800px; margin: 0 auto; align-items: ${align}; }
         
         input, select, textarea {
           width: 100%; font-size: 24px; color: ${theme.text}; outline: none; transition: border-color 0.2s;
           ${inputBorderCSS}
         }
-        input::placeholder, textarea::placeholder { color: #CBD5E1; opacity: 1; }
+        input::placeholder, textarea::placeholder { color: #A3D5FF; opacity: 1; }
         input:focus, textarea:focus, select:focus { border-color: ${theme.accent}; }
         textarea { min-height: 150px; resize: none; }
 
@@ -399,7 +400,11 @@ export default function FormPage() {
 
         /* FOOTER */
         .footer { margin-top: auto; padding-top: 60px; display: flex; justify-content: space-between; align-items: center; border-top: 1px solid ${theme.border}; }
-        .btn-back { background: transparent; border: none; font-size: 18px; font-weight: 600; color: #9CA3AF; cursor: pointer; padding: 10px 20px; transition: color 0.2s; }
+        
+        .btn-back { 
+          background: transparent; border: none; font-size: 18px; font-weight: 600; 
+          color: #9CA3AF; cursor: pointer; padding: 10px 20px; transition: color 0.2s; 
+        }
         .btn-back:hover { color: ${theme.text}; }
         .btn-back.hidden { visibility: hidden; }
         
@@ -412,10 +417,10 @@ export default function FormPage() {
         .btn-next:active { transform: translateY(1px); }
         .btn-next:disabled { background: #E5E5E5; cursor: not-allowed; box-shadow: none; transform: none; }
 
-        /* LOADING/ERROR */
+        /* LOADING/ERROR SCREENS */
         .loading-screen, .error-screen { height: 100vh; display: flex; justify-content: center; align-items: center; font-size: 18px; color: #64748B; font-family: sans-serif; }
         .error-screen { color: #DC2626; font-weight: bold; }
-
+        
         /* RESPONSIVE */
         @media (max-width: 800px) {
           .card { padding: 30px; height: auto; min-height: 80vh; border: none; box-shadow: none; }
@@ -434,18 +439,18 @@ export default function FormPage() {
 
           <div style={{ flexGrow: 1, display: 'flex', flexDirection: 'column', justifyContent: 'center' }}>
             
+            {/* QUESTION HEADER */}
             <div className="question-header">
               <h1 className="question-title">
-                {prefix} 
+                {numberPrefix} 
                 <span style={{flex: 1}}>{q.question_text}{q.required && <span className="required-star">*</span>}</span>
               </h1>
               {q.description && <div className="description">{q.description}</div>}
             </div>
 
+            {/* INPUT AREA */}
             <div className="input-wrapper">
               
-              {/* === INPUT TYPE SWITCH === */}
-
               {/* 1. SIMPLE TEXT (Text, Email, Phone, Number) */}
               {['text', 'email', 'phone', 'number'].includes(q.question_type) && (
                 <input 
@@ -564,11 +569,11 @@ export default function FormPage() {
           </div>
 
           <div className="footer">
-            <button className={`btn-back ${idx === 0 ? 'hidden' : ''}`} onClick={() => setIdx(idx - 1)}>
+            <button className={`btn-back ${index === 0 ? 'hidden' : ''}`} onClick={() => setIndex(index - 1)}>
               ← Back
             </button>
             <button className="btn-next" onClick={handleNext} disabled={q.question_type === 'consent' && !consentChecked}>
-              {idx < qs.length - 1 ? (q.button_text || 'Next') : 'Submit'}
+              {index < questions.length - 1 ? (q.button_text || 'Next') : 'Submit'}
             </button>
           </div>
 
