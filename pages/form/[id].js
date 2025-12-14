@@ -3,7 +3,7 @@ import { useRouter } from 'next/router'
 import { createClient } from '@supabase/supabase-js'
 import forge from 'node-forge'
 
-// --- CONFIGURATION ---
+// --- CONFIG ---
 const SUPABASE_URL = 'https://xrgrlfpjeovjeshebxya.supabase.co'
 const SUPABASE_KEY = 'sb_publishable_TgJkb2-QML1h1aOAYAVupg_njoyLImS'
 const supabase = createClient(SUPABASE_URL, SUPABASE_KEY)
@@ -12,7 +12,6 @@ export default function FormPage() {
   const router = useRouter()
   const { id } = router.query
   
-  // --- STATE ---
   const [questions, setQuestions] = useState([])
   const [index, setIndex] = useState(0)
   const [answers, setAnswers] = useState({})
@@ -21,204 +20,202 @@ export default function FormPage() {
   const [error, setError] = useState('')
   const [consentChecked, setConsentChecked] = useState(false)
 
-  // --- 1. INITIALIZATION & DECRYPTION ---
+  // --- 1. SETUP ---
   useEffect(() => {
     if (!id) return
-
-    // 1. Get Keys from URL Hash (Client-side Security)
     const hashParams = new URLSearchParams(window.location.hash.substring(1))
-    const qKeyB64 = hashParams.get('q')
-    const pKeyB64 = hashParams.get('p')
+    const qKeyB64 = hashParams.get('q'); const pKeyB64 = hashParams.get('p')
 
     if (!qKeyB64 || !pKeyB64) {
-      setError('MISSING KEYS: This is a secure form. Please use the full link provided by the software.')
-      setLoading(false)
-      return
+      setError('MISSING KEYS: Use the secure link provided by the software.')
+      setLoading(false); return
     }
 
     try {
-      // 2. Decode Keys
-      const qKey = forge.util.decode64(qKeyB64)
-      const pKey = forge.util.decode64(pKeyB64)
+      const qKey = forge.util.decode64(qKeyB64); const pKey = forge.util.decode64(pKeyB64)
       setKeys({ q: qKey, p: pKey })
 
-      // 3. Fetch & Decrypt Data
       const fetchData = async () => {
-        const { data: rawData, error: dbError } = await supabase
-          .from('questions')
-          .select('*')
-          .eq('form_id', id)
-          .order('order')
-
-        if (dbError) throw dbError
-
-        const decrypted = rawData.map(row => {
-          return {
-            ...row,
-            question_text: decryptAES(row.question_text, qKey),
-            description: decryptAES(row.description, qKey),
-            options: decryptAES(row.options, qKey) || []
-          }
-        })
-        setQuestions(decrypted)
+        const { data, error } = await supabase.from('questions').select('*').eq('form_id', id).order('order')
+        if (error) throw error
+        setQuestions(data.map(r => ({
+          ...r,
+          question_text: decrypt(r.question_text, qKey),
+          description: decrypt(r.description, qKey),
+          options: decrypt(r.options, qKey) || []
+        })))
         setLoading(false)
       }
       fetchData()
-    } catch (e) {
-      console.error(e)
-      setError("Secure Link Corrupted or Invalid.")
-      setLoading(false)
-    }
+    } catch (e) { setError("Secure Link Invalid"); setLoading(false) }
   }, [id])
 
-  // --- CRYPTO HELPERS ---
-  const decryptAES = (b64Cipher, key) => {
-    if (!b64Cipher) return ""
+  const decrypt = (b64, key) => {
+    if (!b64) return ""
     try {
-      const raw = forge.util.decode64(b64Cipher)
-      const iv = raw.substring(0, 12)
-      const tag = raw.substring(12, 28)
-      const ciphertext = raw.substring(28)
-
-      const decipher = forge.cipher.createDecipher('AES-GCM', key)
-      decipher.start({ iv: iv, tag: tag })
-      decipher.update(forge.util.createBuffer(ciphertext))
-      if (decipher.finish()) return JSON.parse(decipher.output.toString())
-      return "[Decryption Failed]"
-    } catch (e) { return "" }
+      const raw = forge.util.decode64(b64)
+      const d = forge.cipher.createDecipher('AES-GCM', key)
+      d.start({ iv: raw.substring(0, 12), tag: raw.substring(12, 28) })
+      d.update(forge.util.createBuffer(raw.substring(28)))
+      return d.finish() ? JSON.parse(d.output.toString()) : ""
+    } catch { return "" }
   }
 
-  // --- 2. SUBMISSION (ENCRYPTION) ---
+  // --- 2. SUBMIT ---
   const handleSubmit = async () => {
     try {
-      // A. Prepare Payload
-      const payload = JSON.stringify(answers)
-
-      // B. Generate Session Key
-      const sessionKey = forge.random.getBytesSync(32)
-      const iv = forge.random.getBytesSync(12)
-
-      // C. Encrypt Payload (AES-GCM)
-      const cipher = forge.cipher.createCipher('AES-GCM', sessionKey)
-      cipher.start({ iv: iv })
-      cipher.update(forge.util.createBuffer(payload))
-      cipher.finish()
-      const encryptedData = cipher.output.getBytes()
-      const tag = cipher.mode.tag.getBytes()
-
-      // D. Encrypt Session Key (RSA-OAEP)
+      const sKey = forge.random.getBytesSync(32); const iv = forge.random.getBytesSync(12)
+      const c = forge.cipher.createCipher('AES-GCM', sKey); c.start({ iv }); c.update(forge.util.createBuffer(JSON.stringify(answers))); c.finish()
       const pem = `-----BEGIN PUBLIC KEY-----\n${forge.util.encode64(keys.p).match(/.{1,64}/g).join('\n')}\n-----END PUBLIC KEY-----`
-      const publicKey = forge.pki.publicKeyFromPem(pem)
-      const encryptedSessionKey = publicKey.encrypt(sessionKey, 'RSA-OAEP', { md: forge.md.sha256.create() })
-
-      // E. Upload Envelope
-      await supabase.from('responses').insert({ 
-        form_id: id, 
-        response: {
-          key: forge.util.encode64(encryptedSessionKey), 
-          iv: forge.util.encode64(iv), 
-          tag: forge.util.encode64(tag), 
-          data: forge.util.encode64(encryptedData)
-        }
-      })
+      const encKey = forge.pki.publicKeyFromPem(pem).encrypt(sKey, 'RSA-OAEP', { md: forge.md.sha256.create() })
       
-      alert('Response encrypted & submitted successfully!')
-      setAnswers({})
-      setIndex(0) // Reset form or redirect
-      
-    } catch (e) {
-      alert('Encryption Error: ' + e.message)
-    }
+      await supabase.from('responses').insert({ form_id: id, response: {
+        key: forge.util.encode64(encKey), iv: forge.util.encode64(iv), tag: forge.util.encode64(c.mode.tag.getBytes()), data: forge.util.encode64(c.output.getBytes())
+      }})
+      alert('Response encrypted & submitted!'); setAnswers({}); setIndex(0)
+    } catch (e) { alert('Error: ' + e.message) }
   }
 
-  // --- 3. LOGIC & VALIDATION ---
   const handleNext = () => {
     const q = questions[index]
-    const val = answers[q.id]
-    
-    // Validation Logic
-    if (q.required && !['title','info'].includes(q.question_type)) {
-      if (q.question_type === 'consent' && !consentChecked) {
-        alert("You must agree to continue.")
-        return
-      }
-      if (q.question_type === 'contact_info') {
-        // Require at least Name and Email for contact blocks
-        if (!val || !val['Name'] || !val['Email']) {
-          alert('Please fill in at least Name and Email.')
-          return
-        }
-      }
-      // General check for empty values
-      if (!val || (Array.isArray(val) && val.length === 0) || (typeof val === 'string' && val.trim() === '')) { 
-        alert('This question is required.')
-        return 
-      }
-    }
-
-    if (index < questions.length - 1) {
-      setIndex(index + 1)
-      setConsentChecked(false) // Reset consent for next slide if applicable
-    } else {
-      handleSubmit()
-    }
+    if (q.required && !['title','info','consent'].includes(q.question_type) && (!answers[q.id] || answers[q.id].length===0)) return alert("Required")
+    if (index < questions.length - 1) { setIndex(index + 1); setConsentChecked(false) } else handleSubmit()
   }
 
-  const updateContact = (field, text) => {
-    const current = answers[questions[index].id] || {}
-    setAnswers({ ...answers, [questions[index].id]: { ...current, [field]: text } })
-  }
+  const updateContact = (f, v) => setAnswers({...answers, [questions[index].id]: {...(answers[questions[index].id]||{}), [f]: v}})
 
-  // --- 4. RENDER ---
-  if (loading) return <div className="min-h-screen flex items-center justify-center text-slate-500 font-medium">Initializing Secure Connection...</div>
-  if (error) return <div className="min-h-screen flex items-center justify-center text-red-600 font-bold p-10 bg-red-50">{error}</div>
-  if (questions.length === 0) return <div className="min-h-screen flex items-center justify-center text-slate-400">No questions found.</div>
+  if (loading) return <div className="loading">Decrypting Secure Connection...</div>
+  if (error) return <div className="error">{error}</div>
+  if (!questions.length) return <div className="loading">No questions found.</div>
 
   const q = questions[index]
   const val = answers[q.id]
 
   return (
-    <div className="min-h-screen bg-slate-50 font-sans text-slate-900 flex flex-col items-center">
-      
-      {/* PROGRESS BAR */}
-      <div className="w-full h-2 bg-slate-200 fixed top-0 z-50">
-        <div className="h-full bg-blue-600 transition-all duration-500 ease-out" style={{ width: `${((index + 1) / questions.length) * 100}%` }} />
+    <div className="page-container">
+      {/* GLOBAL STYLES (NO TAILWIND REQUIRED) */}
+      <style jsx global>{`
+        body { margin: 0; background-color: #F8FAFC; color: #1E293B; font-family: 'Segoe UI', -apple-system, BlinkMacSystemFont, sans-serif; }
+        * { box-sizing: border-box; }
+        
+        .page-container { min-height: 100vh; display: flex; flex-direction: column; align-items: center; }
+        
+        .progress-bar { width: 100%; height: 6px; background: #E2E8F0; position: fixed; top: 0; z-index: 50; }
+        .progress-fill { height: 100%; background: #2563EB; transition: width 0.5s ease; }
+        
+        .content-wrapper { flex-grow: 1; width: 100%; display: flex; justify-content: center; align-items: center; padding: 40px 20px; }
+        
+        /* THE CARD */
+        .card {
+          background: #FFFFFF;
+          width: 100%;
+          max-width: 800px;
+          min-height: 600px;
+          border-radius: 16px;
+          box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.15);
+          border: 1px solid #E2E8F0;
+          padding: 60px;
+          display: flex;
+          flex-direction: column;
+        }
+
+        .badge-container { display: flex; justify-content: center; margin-bottom: 30px; }
+        .secure-badge { 
+          background: #DCFCE7; color: #15803D; font-size: 11px; font-weight: 800; 
+          padding: 6px 14px; border-radius: 20px; letter-spacing: 1px; text-transform: uppercase; 
+          border: 1px solid #BBF7D0; display: flex; align-items: center; gap: 6px;
+        }
+
+        .question-title { font-size: 32px; font-weight: 800; color: #0F172A; text-align: center; margin: 0 0 15px 0; line-height: 1.2; }
+        .required-star { color: #DC2626; margin-left: 4px; }
+        .description { font-size: 18px; color: #64748B; text-align: center; margin: 0 0 40px 0; line-height: 1.6; white-space: pre-wrap; }
+
+        /* INPUTS */
+        .input-group { width: 100%; display: flex; flex-direction: column; gap: 15px; }
+        
+        input[type="text"], input[type="email"], input[type="tel"], input[type="number"], input[type="date"], select, textarea {
+          width: 100%; padding: 16px; font-size: 18px; border: 2px solid #E2E8F0; border-radius: 8px;
+          background: #FFFFFF; color: #334155; outline: none; transition: border-color 0.2s;
+        }
+        input:focus, textarea:focus, select:focus { border-color: #2563EB; }
+        
+        textarea { min-height: 150px; resize: none; }
+
+        /* CHOICE BUTTONS */
+        .choice-btn {
+          width: 100%; text-align: left; padding: 18px 24px; border: 2px solid #E2E8F0;
+          border-radius: 10px; background: #FFFFFF; font-size: 18px; font-weight: 500; color: #334155;
+          cursor: pointer; transition: all 0.2s; display: flex; align-items: center;
+        }
+        .choice-btn:hover { background: #F1F5F9; border-color: #CBD5E1; }
+        .choice-btn.selected { border-color: #2563EB; background: #EFF6FF; color: #1D4ED8; box-shadow: 0 2px 4px rgba(37,99,235,0.1); }
+        .key-hint { 
+          width: 32px; height: 32px; border: 1px solid #CBD5E1; border-radius: 6px; 
+          display: flex; align-items: center; justify-content: center; margin-right: 15px;
+          font-size: 14px; color: #94A3B8;
+        }
+        .choice-btn.selected .key-hint { border-color: #93C5FD; background: #FFFFFF; color: #2563EB; }
+
+        /* CHECKBOX & CONSENT */
+        .checkbox-label {
+          display: flex; align-items: flex-start; padding: 18px; border: 2px solid #E2E8F0;
+          border-radius: 10px; cursor: pointer; transition: all 0.2s;
+        }
+        .checkbox-label:hover { background: #F8FAFC; }
+        .checkbox-label.checked { border-color: #2563EB; background: #EFF6FF; }
+        
+        .check-box {
+          width: 24px; height: 24px; border: 2px solid #CBD5E1; border-radius: 6px; background: white;
+          margin-right: 15px; display: flex; align-items: center; justify-content: center; flex-shrink: 0;
+        }
+        .checkbox-label.checked .check-box { background: #2563EB; border-color: #2563EB; color: white; }
+
+        /* FOOTER */
+        .footer { margin-top: auto; padding-top: 40px; display: flex; justify-content: space-between; border-top: 1px solid #F1F5F9; }
+        
+        .btn-back { background: transparent; border: none; font-size: 16px; font-weight: 700; color: #94A3B8; cursor: pointer; }
+        .btn-back:hover { color: #64748B; }
+        .btn-back.hidden { visibility: hidden; }
+
+        .btn-next { 
+          background: #2563EB; color: white; padding: 14px 40px; border-radius: 8px; 
+          font-size: 18px; font-weight: 700; border: none; cursor: pointer; 
+          box-shadow: 0 4px 6px -1px rgba(37, 99, 235, 0.2); transition: transform 0.1s;
+        }
+        .btn-next:hover { background: #1D4ED8; }
+        .btn-next:active { transform: scale(0.98); }
+        .btn-next:disabled { background: #CBD5E1; cursor: not-allowed; box-shadow: none; }
+
+        /* UTILS */
+        .loading, .error { height: 100vh; display: flex; justify-content: center; align-items: center; font-size: 18px; color: #64748B; }
+        .error { color: #DC2626; font-weight: bold; }
+      `}</style>
+
+      {/* PROGRESS */}
+      <div className="progress-bar">
+        <div className="progress-fill" style={{ width: `${((index + 1) / questions.length) * 100}%` }} />
       </div>
 
-      <div className="w-full flex-grow flex flex-col justify-center items-center py-12 px-4">
-        
-        {/* MAIN CARD: Fixed 800px Width, Shadowed, Rounded */}
-        <div className="w-full max-w-[800px] bg-white rounded-2xl shadow-xl border border-slate-200 p-10 md:p-16 flex flex-col relative">
+      <div className="content-wrapper">
+        <div className="card">
           
-          {/* SECURE BADGE */}
-          <div className="flex justify-center mb-8">
-            <div className="bg-green-50 text-green-700 text-xs font-bold px-4 py-1.5 rounded-full border border-green-200 uppercase tracking-widest flex items-center gap-2">
-              <span className="text-lg">🔒</span> End-to-End Encrypted
-            </div>
+          {/* BADGE */}
+          <div className="badge-container">
+            <span className="secure-badge">🔒 End-to-End Encrypted</span>
           </div>
 
-          <div className="flex-grow flex flex-col justify-center w-full">
-            
-            {/* QUESTION HEADER */}
-            <h1 className="text-3xl md:text-4xl font-extrabold mb-4 text-center leading-tight text-slate-900">
+          <div style={{ flexGrow: 1, display: 'flex', flexDirection: 'column', justifyContent: 'center' }}>
+            <h1 className="question-title">
               {q.question_text}
-              {q.required && <span className="text-red-500 ml-1" title="Required">*</span>}
+              {q.required && <span className="required-star">*</span>}
             </h1>
+            
+            {q.description && <div className="description">{q.description}</div>}
 
-            {q.description && (
-              <p className="text-lg text-slate-500 mb-10 text-center whitespace-pre-wrap leading-relaxed max-w-2xl mx-auto">
-                {q.description}
-              </p>
-            )}
-
-            {/* INPUTS AREA */}
-            <div className="w-full space-y-6">
-              
-              {/* 1. SIMPLE INPUTS */}
+            <div className="input-group">
               {['text', 'email', 'phone', 'number'].includes(q.question_type) && (
                 <input 
                   type={q.question_type === 'number' ? 'number' : 'text'} 
-                  className="w-full p-5 text-xl border-2 border-slate-200 rounded-xl focus:border-blue-600 focus:ring-4 focus:ring-blue-50 outline-none transition-all placeholder-slate-300" 
                   placeholder="Type your answer here..." 
                   autoFocus
                   value={val || ''} 
@@ -227,179 +224,88 @@ export default function FormPage() {
                 />
               )}
 
-              {/* 2. LONG TEXT */}
               {q.question_type === 'long_text' && (
                 <textarea 
-                  className="w-full p-5 text-xl border-2 border-slate-200 rounded-xl focus:border-blue-600 focus:ring-4 focus:ring-blue-50 outline-none transition-all min-h-[180px] resize-none" 
-                  placeholder="Type your detailed answer here..."
+                  placeholder="Type a detailed answer..."
                   autoFocus
                   value={val || ''} 
                   onChange={(e) => setAnswers({ ...answers, [q.id]: e.target.value })} 
                 />
               )}
 
-              {/* 3. CHOICES (Radio) */}
-              {['single_choice', 'yes_no'].includes(q.question_type) && (
-                <div className="grid gap-3">
-                  {(q.question_type === 'yes_no' ? ['Yes', 'No'] : q.options).map((opt, i) => (
-                    <button 
-                      key={i} 
-                      onClick={() => setAnswers({ ...answers, [q.id]: opt })} 
-                      className={`w-full text-left p-5 rounded-xl border-2 text-lg font-semibold transition-all transform active:scale-[0.99] flex items-center ${
-                        val === opt 
-                          ? 'border-blue-600 bg-blue-50 text-blue-700 shadow-sm ring-1 ring-blue-200' 
-                          : 'border-slate-200 bg-white hover:border-blue-400 hover:bg-slate-50 text-slate-700'
-                      }`}
-                    >
-                      <span className={`mr-4 w-8 h-8 flex-shrink-0 flex items-center justify-center border rounded-md text-sm ${val===opt ? 'border-blue-400 bg-white text-blue-600' : 'border-slate-300 text-slate-400'}`}>
-                        {String.fromCharCode(65 + i)}
-                      </span>
-                      {opt}
-                    </button>
-                  ))}
+              {['single_choice', 'yes_no'].includes(q.question_type) && (q.question_type === 'yes_no' ? ['Yes', 'No'] : q.options).map((opt, i) => (
+                <div key={i} onClick={() => setAnswers({ ...answers, [q.id]: opt })} className={`choice-btn ${val === opt ? 'selected' : ''}`}>
+                  <div className="key-hint">{String.fromCharCode(65 + i)}</div>
+                  {opt}
                 </div>
-              )}
+              ))}
 
-              {/* 4. CHECKBOXES */}
-              {q.question_type === 'checkbox' && (
-                 <div className="grid gap-3">
-                   {q.options.map((opt, i) => {
-                     const curr = val ? JSON.parse(val) : []
-                     const checked = curr.includes(opt)
-                     return (
-                       <label key={i} className={`flex items-center w-full p-5 rounded-xl border-2 cursor-pointer transition-all ${checked ? 'border-blue-600 bg-blue-50 ring-1 ring-blue-200' : 'border-slate-200 bg-white hover:bg-slate-50 hover:border-blue-300'}`}>
-                         <div className={`w-6 h-6 mr-4 border-2 rounded flex-shrink-0 flex items-center justify-center transition-colors ${checked ? 'bg-blue-600 border-blue-600' : 'border-slate-300 bg-white'}`}>
-                           {checked && <svg className="w-4 h-4 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="3" d="M5 13l4 4L19 7"></path></svg>}
-                         </div>
-                         <input type="checkbox" className="hidden" checked={checked} 
-                            onChange={(e) => { 
-                              let newSel = [...curr]
-                              if (e.target.checked) newSel.push(opt)
-                              else newSel = newSel.filter(x => x !== opt)
-                              setAnswers({ ...answers, [q.id]: JSON.stringify(newSel) }) 
-                            }} 
-                          />
-                         <span className={`text-lg font-semibold ${checked ? 'text-blue-700' : 'text-slate-700'}`}>{opt}</span>
-                       </label>
-                     )
-                   })}
-                 </div>
-              )}
+              {q.question_type === 'checkbox' && q.options.map((opt, i) => {
+                const curr = val ? JSON.parse(val) : []
+                const isChecked = curr.includes(opt)
+                return (
+                  <label key={i} className={`checkbox-label ${isChecked ? 'checked' : ''}`}>
+                    <input type="checkbox" style={{display:'none'}} checked={isChecked} onChange={(e) => {
+                      let newSel = [...curr]
+                      e.target.checked ? newSel.push(opt) : newSel = newSel.filter(x => x !== opt)
+                      setAnswers({ ...answers, [q.id]: JSON.stringify(newSel) })
+                    }} />
+                    <div className="check-box">{isChecked && '✓'}</div>
+                    <span style={{ fontSize: '18px', fontWeight: '500' }}>{opt}</span>
+                  </label>
+                )
+              })}
 
-              {/* 5. DROPDOWN */}
               {q.question_type === 'dropdown' && (
-                <div className="relative">
-                  <select 
-                    className="w-full p-5 text-xl border-2 border-slate-200 rounded-xl bg-white focus:border-blue-600 focus:ring-4 focus:ring-blue-50 outline-none appearance-none cursor-pointer text-slate-700 font-medium"
-                    value={val || ''}
-                    onChange={(e) => setAnswers({ ...answers, [q.id]: e.target.value })}
-                  >
-                    <option value="" disabled>Select an option...</option>
-                    {q.options.map((o, i) => <option key={i} value={o}>{o}</option>)}
-                  </select>
-                  <div className="absolute inset-y-0 right-0 flex items-center px-6 pointer-events-none text-slate-500">▼</div>
-                </div>
+                <select value={val || ''} onChange={(e) => setAnswers({ ...answers, [q.id]: e.target.value })}>
+                  <option value="" disabled>Select an option...</option>
+                  {q.options.map((o, i) => <option key={i} value={o}>{o}</option>)}
+                </select>
               )}
 
-              {/* 6. SLIDER / RATING */}
               {['rating', 'slider'].includes(q.question_type) && (
-                <div className="pt-8 pb-4 px-2">
-                  <div className="relative mb-8">
-                    <input 
-                      type="range" 
-                      min={q.range_min || 1} 
-                      max={q.range_max || 10} 
-                      step={1}
-                      value={val || Math.ceil((q.range_max || 10)/2)} 
-                      onChange={(e) => setAnswers({ ...answers, [q.id]: e.target.value })}
-                      className="w-full h-3 bg-slate-200 rounded-lg appearance-none cursor-pointer accent-blue-600 hover:accent-blue-700"
-                    />
-                    <div className="flex justify-between mt-4 text-slate-400 font-bold uppercase tracking-wider text-xs">
-                      <span>Low ({q.range_min || 1})</span>
-                      <span>High ({q.range_max || 10})</span>
-                    </div>
-                  </div>
-                  <div className="text-center">
-                    <span className="text-5xl font-bold text-blue-600 border-4 border-blue-100 rounded-full w-24 h-24 flex items-center justify-center mx-auto shadow-sm">
-                      {val || Math.ceil((q.range_max || 10)/2)}
-                    </span>
-                  </div>
-                </div>
-              )}
-
-              {/* 7. DATE PICKER */}
-              {q.question_type === 'date' && (
-                <div className="flex justify-center">
+                <div style={{ padding: '20px 0', textAlign: 'center' }}>
                   <input 
-                    type="date" 
-                    className="w-full max-w-sm p-5 text-xl border-2 border-slate-200 rounded-xl focus:border-blue-600 outline-none text-center text-slate-700 bg-white font-mono"
-                    value={val || ''}
+                    type="range" min={q.range_min || 1} max={q.range_max || 10} step={1}
+                    value={val || Math.ceil((q.range_max || 10)/2)} 
                     onChange={(e) => setAnswers({ ...answers, [q.id]: e.target.value })}
+                    style={{ width: '100%', marginBottom: '20px' }}
                   />
+                  <div style={{ fontSize: '48px', fontWeight: 'bold', color: '#2563EB' }}>
+                    {val || Math.ceil((q.range_max || 10)/2)}
+                  </div>
                 </div>
               )}
 
-              {/* 8. CONTACT INFO BLOCK */}
-              {q.question_type === 'contact_info' && (
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
-                  {['Name', 'Email', 'Phone', 'Company'].map((field) => (
-                    <div key={field}>
-                      <label className="block text-xs font-bold text-slate-400 uppercase tracking-wide mb-2 ml-1">{field}</label>
-                      <input 
-                        type={field === 'Email' ? 'email' : (field === 'Phone' ? 'tel' : 'text')}
-                        className="w-full p-4 text-lg border-2 border-slate-200 rounded-xl focus:border-blue-600 outline-none transition-colors"
-                        placeholder={`Enter ${field}...`}
-                        value={(val || {})[field] || ''}
-                        onChange={(e) => updateContact(field, e.target.value)}
-                      />
-                    </div>
-                  ))}
-                </div>
+              {q.question_type === 'date' && (
+                <input type="date" value={val || ''} onChange={(e) => setAnswers({ ...answers, [q.id]: e.target.value })} />
               )}
 
-              {/* 9. CONSENT */}
+              {q.question_type === 'contact_info' && ['Name', 'Email', 'Phone', 'Company'].map(f => (
+                <input key={f} type="text" placeholder={f} value={(val || {})[f] || ''} onChange={(e) => updateContact(f, e.target.value)} />
+              ))}
+
               {q.question_type === 'consent' && (
-                 <label className={`flex items-start p-6 border-2 rounded-xl cursor-pointer transition-all ${consentChecked ? 'border-green-500 bg-green-50 ring-2 ring-green-100' : 'border-slate-300 hover:border-slate-400 bg-white'}`}>
-                   <div className={`mt-1 w-6 h-6 mr-4 border-2 rounded flex-shrink-0 flex items-center justify-center transition-colors ${consentChecked ? 'bg-green-600 border-green-600' : 'border-slate-300 bg-white'}`}>
-                      {consentChecked && <span className="text-white font-bold text-sm">✓</span>}
-                   </div>
-                   <input type="checkbox" className="hidden" checked={consentChecked} 
-                      onChange={(e) => {
-                        setConsentChecked(e.target.checked)
-                        setAnswers({ ...answers, [q.id]: e.target.checked ? "Agreed" : "" })
-                      }} 
-                    />
-                   <div className="flex-1">
-                     <span className="text-lg font-bold text-slate-900 block mb-1">I Agree</span>
-                     <span className="text-slate-500 text-sm">I acknowledge that I have read and accept the terms presented above.</span>
-                   </div>
-                 </label>
+                <label className={`checkbox-label ${consentChecked ? 'checked' : ''}`}>
+                  <input type="checkbox" style={{display:'none'}} checked={consentChecked} onChange={(e) => {
+                    setConsentChecked(e.target.checked)
+                    setAnswers({ ...answers, [q.id]: e.target.checked ? "Agreed" : "" })
+                  }} />
+                  <div className="check-box">{consentChecked && '✓'}</div>
+                  <div>
+                    <div style={{ fontWeight: 'bold', fontSize: '18px' }}>I Agree</div>
+                    <div style={{ color: '#64748B' }}>I accept the terms and conditions.</div>
+                  </div>
+                </label>
               )}
-
             </div>
           </div>
 
-          {/* FOOTER NAV */}
-          <div className="flex justify-between items-center mt-12 pt-8 border-t border-slate-100">
-             <button 
-                onClick={() => index > 0 && setIndex(index-1)} 
-                className={`text-slate-400 hover:text-slate-600 font-bold px-5 py-3 text-lg transition-colors flex items-center gap-2 ${index === 0 ? 'invisible' : ''}`}
-             >
-               ← Back
-             </button>
-             
-             <button 
-                onClick={handleNext} 
-                disabled={q.question_type === 'consent' && !consentChecked}
-                className={`text-white text-lg font-bold py-3 px-10 rounded-xl shadow-lg transition-all transform active:scale-[0.98] flex items-center gap-3 ${
-                  q.question_type === 'consent' && !consentChecked 
-                    ? 'bg-slate-300 cursor-not-allowed shadow-none' 
-                    : 'bg-blue-600 hover:bg-blue-700 hover:shadow-xl hover:-translate-y-1'
-                }`}
-              >
-                {index < questions.length - 1 ? (q.button_text || 'Next') : 'Submit Securely'}
-                {index < questions.length - 1 && <span>→</span>}
-             </button>
+          <div className="footer">
+            <button className={`btn-back ${index === 0 ? 'hidden' : ''}`} onClick={() => setIndex(index - 1)}>← Back</button>
+            <button className="btn-next" onClick={handleNext} disabled={q.question_type === 'consent' && !consentChecked}>
+              {index < questions.length - 1 ? (q.button_text || 'Next') : 'Submit Securely'}
+            </button>
           </div>
 
         </div>
