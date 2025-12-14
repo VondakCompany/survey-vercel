@@ -8,18 +8,22 @@ const SUPABASE_URL = 'https://xrgrlfpjeovjeshebxya.supabase.co'
 const SUPABASE_KEY = 'sb_publishable_TgJkb2-QML1h1aOAYAVupg_njoyLImS'
 const supabase = createClient(SUPABASE_URL, SUPABASE_KEY)
 
-// --- THEME DEFINITIONS ---
-// These match the Python "Theme Engine" exactly.
+// --- THEME ENGINE ---
+// Matches the Python definition exactly.
 const THEMES = {
   pro: {
-    bg: "#FAFAFA",
+    bg: "#FFFFFF",
     cardBg: "#FFFFFF",
     text: "#1A1A1A",
-    accent: "#000000",
-    border: "#E5E5E5",
-    radius: "4px",
+    accent: "#0445AF", // Typeform Blue
+    border: "#A3D5FF", // Light blue underline color
+    radius: "0px",
     btnText: "#FFFFFF",
-    shadow: "0 4px 20px rgba(0,0,0,0.08)"
+    shadow: "none",
+    inputStyle: "underline",
+    align: "left",
+    numberStyle: "arrow",
+    font: "'Segoe UI', Roboto, Helvetica, Arial, sans-serif"
   },
   pop: {
     bg: "#F8FAFC",
@@ -29,7 +33,11 @@ const THEMES = {
     border: "#E2E8F0",
     radius: "16px",
     btnText: "#FFFFFF",
-    shadow: "0 25px 50px -12px rgba(0, 0, 0, 0.15)"
+    shadow: "0 25px 50px -12px rgba(0, 0, 0, 0.15)",
+    inputStyle: "box",
+    align: "center",
+    numberStyle: "none",
+    font: "'Inter', sans-serif"
   }
 }
 
@@ -38,39 +46,34 @@ export default function FormPage() {
   const { id } = router.query
   
   // --- STATE ---
-  const [questions, setQuestions] = useState([])
-  const [index, setIndex] = useState(0)
-  const [answers, setAnswers] = useState({})
+  const [qs, setQs] = useState([])
+  const [idx, setIdx] = useState(0)
+  const [ans, setAnswers] = useState({})
   const [keys, setKeys] = useState({ q: null, p: null })
-  const [theme, setTheme] = useState(THEMES.pro) // Default to Pro
-  
+  const [theme, setTheme] = useState(THEMES.pro)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
   const [consentChecked, setConsentChecked] = useState(false)
 
-  // --- 1. INITIALIZATION & DECRYPTION ---
+  // --- 1. INITIALIZATION ---
   useEffect(() => {
     if (!id) return
 
-    // Parse URL Hash safely (Handles special chars like '+' correctly)
-    const hashParams = new URLSearchParams(window.location.hash.substring(1))
-    const qKeyB64 = hashParams.get('q')
-    const pKeyB64 = hashParams.get('p')
+    const fetchData = async () => {
+      try {
+        // A. Get Keys from Secure Store
+        const { data: keyData, error: keyError } = await supabase
+          .from('survey_keys')
+          .select('*')
+          .eq('form_id', id)
+          .single()
 
-    if (!qKeyB64 || !pKeyB64) {
-      setError('MISSING KEYS: Use the secure link provided by the software.')
-      setLoading(false)
-      return
-    }
+        if (keyError || !keyData) {
+          throw new Error("Survey not found or unpublished.")
+        }
 
-    try {
-      const qKey = forge.util.decode64(qKeyB64)
-      const pKey = forge.util.decode64(pKeyB64)
-      setKeys({ q: qKey, p: pKey })
-
-      const fetchData = async () => {
-        // A. Fetch Theme Metadata
-        const { data: formData, error: formError } = await supabase
+        // B. Get Theme Metadata
+        const { data: formData } = await supabase
           .from('forms')
           .select('theme')
           .eq('id', id)
@@ -80,33 +83,37 @@ export default function FormPage() {
           setTheme(THEMES[formData.theme])
         }
 
-        // B. Fetch Questions
-        const { data: rawData, error: dbError } = await supabase
+        // C. Decode Keys
+        const qKey = forge.util.decode64(keyData.q_key)
+        setKeys({ q: qKey, p: keyData.p_key })
+
+        // D. Fetch Questions
+        const { data: qData, error: qError } = await supabase
           .from('questions')
           .select('*')
           .eq('form_id', id)
           .order('order')
 
-        if (dbError) throw dbError
+        if (qError) throw qError
 
-        // C. Decrypt Content
-        const decrypted = rawData.map(row => {
-          return {
-            ...row,
-            question_text: decryptAES(row.question_text, qKey),
-            description: decryptAES(row.description, qKey),
-            options: decryptAES(row.options, qKey) || []
-          }
-        })
-        setQuestions(decrypted)
+        // E. Decrypt Content
+        const decrypted = qData.map(row => ({
+          ...row,
+          question_text: decryptAES(row.question_text, qKey),
+          description: decryptAES(row.description, qKey),
+          options: decryptAES(row.options, qKey) || []
+        }))
+
+        setQs(decrypted)
+        setLoading(false)
+
+      } catch (e) {
+        console.error(e)
+        setError(e.message || "Failed to load survey.")
         setLoading(false)
       }
-      fetchData()
-    } catch (e) {
-      console.error(e)
-      setError("Secure Link Invalid or Corrupted.")
-      setLoading(false)
     }
+    fetchData()
   }, [id])
 
   // --- CRYPTO HELPER ---
@@ -114,350 +121,332 @@ export default function FormPage() {
     if (!b64Cipher) return ""
     try {
       const raw = forge.util.decode64(b64Cipher)
-      const iv = raw.substring(0, 12)
-      const tag = raw.substring(12, 28)
-      const ciphertext = raw.substring(28)
-
-      const decipher = forge.cipher.createDecipher('AES-GCM', key)
-      decipher.start({ iv: iv, tag: tag })
-      decipher.update(forge.util.createBuffer(ciphertext))
-      if (decipher.finish()) return JSON.parse(decipher.output.toString())
-      return "[Decryption Failed]"
-    } catch (e) { return "" }
+      const d = forge.cipher.createDecipher('AES-GCM', key)
+      d.start({ iv: raw.substring(0, 12), tag: raw.substring(12, 28) })
+      d.update(forge.util.createBuffer(raw.substring(28)))
+      return d.finish() ? JSON.parse(d.output.toString()) : ""
+    } catch { return "" }
   }
 
-  // --- 2. SUBMISSION LOGIC ---
+  // --- 2. SUBMISSION ---
   const handleSubmit = async () => {
     try {
-      const payload = JSON.stringify(answers)
-      
-      // Generate Ephemeral Session Key
-      const sessionKey = forge.random.getBytesSync(32)
+      const sKey = forge.random.getBytesSync(32)
       const iv = forge.random.getBytesSync(12)
+      const c = forge.cipher.createCipher('AES-GCM', sKey)
+      c.start({ iv })
+      c.update(forge.util.createBuffer(JSON.stringify(ans)))
+      c.finish()
 
-      // Encrypt Data (AES-GCM)
-      const cipher = forge.cipher.createCipher('AES-GCM', sessionKey)
-      cipher.start({ iv: iv })
-      cipher.update(forge.util.createBuffer(payload))
-      cipher.finish()
-      const encryptedData = cipher.output.getBytes()
-      const tag = cipher.mode.tag.getBytes()
-
-      // Encrypt Session Key (RSA-OAEP)
-      const pem = `-----BEGIN PUBLIC KEY-----\n${forge.util.encode64(keys.p).match(/.{1,64}/g).join('\n')}\n-----END PUBLIC KEY-----`
-      const publicKey = forge.pki.publicKeyFromPem(pem)
-      const encryptedSessionKey = publicKey.encrypt(sessionKey, 'RSA-OAEP', { md: forge.md.sha256.create() })
-
-      // Upload
-      await supabase.from('responses').insert({ 
-        form_id: id, 
-        response: {
-          key: forge.util.encode64(encryptedSessionKey), 
-          iv: forge.util.encode64(iv), 
-          tag: forge.util.encode64(tag), 
-          data: forge.util.encode64(encryptedData)
-        }
-      })
+      const publicKey = forge.pki.publicKeyFromPem(keys.p)
+      const encKey = publicKey.encrypt(sKey, 'RSA-OAEP', { md: forge.md.sha256.create() })
       
-      alert('Response encrypted & submitted successfully!')
+      await supabase.from('responses').insert({ form_id: id, response: {
+        key: forge.util.encode64(encKey), 
+        iv: forge.util.encode64(iv), 
+        tag: forge.util.encode64(c.mode.tag.getBytes()), 
+        data: forge.util.encode64(c.output.getBytes())
+      }})
+      
+      alert('Response submitted securely!')
       setAnswers({})
-      setIndex(0)
+      setIdx(0)
       setConsentChecked(false)
-      
-    } catch (e) {
-      alert('Encryption Error: ' + e.message)
-    }
+    } catch (e) { alert('Encryption Error: ' + e.message) }
   }
 
-  // --- 3. NAVIGATION & VALIDATION ---
+  // --- 3. NAVIGATION ---
   const handleNext = () => {
-    const q = questions[index]
-    const val = answers[q.id]
+    const q = qs[idx]
+    const val = ans[q.id]
     
-    // Check Required
-    if (q.required && !['title','info'].includes(q.question_type)) {
-      if (q.question_type === 'consent' && !consentChecked) {
-        alert("You must agree to continue.")
-        return
-      }
+    // Validation
+    if (q.required && !['title','info','consent'].includes(q.question_type)) {
       if (q.question_type === 'contact_info') {
-        if (!val || !val['Name']) {
-          alert('Name is required.')
-          return
-        }
+        if (!val || !val['Name']) { alert('Name is required.'); return }
       }
-      // General check
-      if (!val || (Array.isArray(val) && val.length === 0) || (typeof val === 'string' && val.trim() === '')) { 
-        alert('This question is required.')
-        return 
+      if ((!val || (Array.isArray(val) && val.length===0) || (typeof val === 'string' && !val.trim()))) { 
+        alert('This question is required.'); return 
       }
     }
+    if (q.question_type === 'consent' && !consentChecked) {
+      alert("You must agree to continue."); return
+    }
 
-    if (index < questions.length - 1) {
-      setIndex(index + 1)
-      setConsentChecked(false) 
+    if (idx < qs.length - 1) {
+      setIdx(idx + 1)
+      setConsentChecked(false)
     } else {
       handleSubmit()
     }
   }
 
-  // Helper for Contact Info inputs
   const updateContact = (field, text) => {
-    const current = answers[questions[index].id] || {}
-    setAnswers({ ...answers, [questions[index].id]: { ...current, [field]: text } })
+    const current = ans[qs[idx].id] || {}
+    setAnswers({ ...ans, [qs[idx].id]: { ...current, [field]: text } })
   }
 
   // --- 4. RENDERER ---
-  if (loading) return <div className="loading">Decrypting Secure Connection...</div>
+  if (loading) return <div className="loading">Loading Secure Survey...</div>
   if (error) return <div className="error">{error}</div>
-  if (questions.length === 0) return <div className="loading">No questions found.</div>
+  if (!qs.length) return <div className="loading">No questions found.</div>
 
-  const q = questions[index]
-  const val = answers[q.id]
+  const q = qs[idx]
+  const val = ans[q.id]
+
+  // Dynamic CSS Variables for the Theme
+  const isPro = theme.inputStyle === 'underline'
+  const align = theme.align === 'left' ? 'flex-start' : 'center'
+  const textAlign = theme.align === 'left' ? 'left' : 'center'
+  const inputBorder = isPro 
+    ? `border-bottom: 2px solid ${theme.border}; border-top:none; border-left:none; border-right:none; border-radius:0; background:transparent; padding: 10px 0;` 
+    : `border: 2px solid ${theme.border}; border-radius: ${theme.radius}; background: ${theme.cardBg}; padding: 16px;`
+  
+  // Typeform-style Arrow Prefix
+  const prefix = theme.numberStyle === 'arrow' 
+    ? <span style={{color: theme.accent, marginRight: 12, fontSize: '0.8em', fontWeight: 'bold'}}>{idx + 1} ➜</span> 
+    : null
 
   return (
     <div className="page-container">
-      {/* FULL CSS STYLING (Embedded) 
-          This ensures it works without Tailwind or external CSS files.
-          It uses the variables from the 'theme' state.
+      {/* FULL GLOBAL CSS
+          Using standard CSS classes for reliability.
       */}
       <style jsx global>{`
-        body { margin: 0; background-color: ${theme.bg}; color: ${theme.text}; font-family: 'Segoe UI', -apple-system, BlinkMacSystemFont, sans-serif; }
+        body { margin: 0; background-color: ${theme.bg}; color: ${theme.text}; font-family: ${theme.font}; }
         * { box-sizing: border-box; }
         
         .page-container { min-height: 100vh; display: flex; flex-direction: column; align-items: center; }
         
-        /* PROGRESS BAR */
-        .progress-bar { width: 100%; height: 6px; background: ${theme.border}; position: fixed; top: 0; z-index: 50; }
+        .progress-bar { width: 100%; height: 4px; background: #E5E7EB; position: fixed; top: 0; z-index: 50; }
         .progress-fill { height: 100%; background: ${theme.accent}; transition: width 0.5s ease; }
         
         .content-wrapper { flex-grow: 1; width: 100%; display: flex; justify-content: center; align-items: center; padding: 40px 20px; }
         
-        /* THE MAIN CARD */
         .card {
           background: ${theme.cardBg};
           width: 100%;
-          max-width: 1280px; /* 16:9 HD Width */
-          aspect-ratio: 16/9;
+          max-width: 1000px;
+          min-height: 600px;
           border-radius: ${theme.radius};
           box-shadow: ${theme.shadow};
-          border: 1px solid ${theme.border};
-          padding: 60px 80px;
+          padding: 60px;
           display: flex;
           flex-direction: column;
-          position: relative;
         }
 
-        /* BADGE */
-        .badge-container { display: flex; justify-content: center; margin-bottom: 30px; }
+        .badge-container { display: flex; justify-content: center; margin-bottom: 40px; }
         .secure-badge { 
-          background: #DCFCE7; color: #15803D; font-size: 11px; font-weight: 800; 
-          padding: 6px 14px; border-radius: 20px; letter-spacing: 1px; text-transform: uppercase; 
-          border: 1px solid #BBF7D0; display: flex; align-items: center; gap: 6px;
+          background: #F0FDF4; color: #15803D; font-size: 11px; font-weight: 800; 
+          padding: 6px 14px; border-radius: 20px; border: 1px solid #BBF7D0; text-transform: uppercase; 
         }
 
-        /* TYPOGRAPHY */
-        .question-title { font-size: 36px; font-weight: 800; color: ${theme.text}; text-align: center; margin: 0 0 15px 0; line-height: 1.2; }
-        .required-star { color: #DC2626; margin-left: 4px; }
-        .description { font-size: 20px; color: #64748B; text-align: center; margin: 0 0 40px 0; line-height: 1.6; white-space: pre-wrap; }
-
-        /* INPUTS */
-        .input-group { width: 100%; display: flex; flex-direction: column; gap: 20px; max-width: 800px; margin: 0 auto; }
-        
-        input[type="text"], input[type="email"], input[type="tel"], input[type="number"], input[type="date"], select, textarea {
-          width: 100%; padding: 20px; font-size: 20px; 
-          border: 2px solid ${theme.border}; 
-          border-radius: ${theme.radius};
-          background: ${theme.cardBg}; 
-          color: ${theme.text}; 
-          outline: none; 
-          transition: all 0.2s;
+        .question-header { margin-bottom: 40px; }
+        .question-title { 
+          font-size: 28px; font-weight: 400; color: ${theme.text}; 
+          text-align: ${textAlign}; margin-bottom: 10px; 
+          display: flex; align-items: flex-start; justify-content: ${align}; 
+          line-height: 1.4;
         }
-        input:focus, textarea:focus, select:focus { border-color: ${theme.accent}; box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.1); }
-        
-        textarea { min-height: 180px; resize: none; }
+        .description { 
+          font-size: 18px; color: #6B7280; text-align: ${textAlign}; 
+          margin-top: 5px; font-style: italic; white-space: pre-wrap; 
+        }
 
+        /* INPUT STYLING */
+        .input-wrapper { width: 100%; display: flex; flex-direction: column; gap: 30px; max-width: 800px; margin: 0 auto; align-items: ${align}; }
+        
+        input, select, textarea {
+          width: 100%; font-size: 24px; color: ${theme.text}; outline: none; transition: border-color 0.2s;
+          ${inputBorder}
+        }
+        input::placeholder, textarea::placeholder { color: #CBD5E1; opacity: 1; }
+        input:focus, textarea:focus, select:focus { border-color: ${theme.accent}; }
+        
         /* CHOICE BUTTONS */
         .choice-btn {
-          width: 100%; text-align: left; padding: 20px 24px; 
-          border: 2px solid ${theme.border};
-          border-radius: ${theme.radius}; 
-          background: ${theme.cardBg}; 
-          font-size: 20px; font-weight: 500; color: ${theme.text};
+          width: 100%; text-align: left; padding: 15px 20px; 
+          border: 1px solid ${isPro ? '#E5E5E5' : theme.border};
+          border-radius: ${isPro ? '4px' : theme.radius}; 
+          background: white; font-size: 20px; color: ${theme.text};
           cursor: pointer; transition: all 0.2s; display: flex; align-items: center;
         }
-        .choice-btn:hover { background: ${theme.bg}; border-color: #CBD5E1; }
-        .choice-btn.selected { border-color: ${theme.accent}; background: ${theme.bg}; color: ${theme.accent}; font-weight: 700; }
-        
-        /* CHECKBOX & CONSENT */
-        .checkbox-label {
-          display: flex; align-items: center; padding: 20px; 
-          border: 2px solid ${theme.border}; 
-          border-radius: ${theme.radius}; 
-          cursor: pointer; transition: all 0.2s;
+        .choice-btn:hover { background: #FAFAFA; border-color: ${theme.accent}; }
+        .choice-btn.selected { 
+          background: ${isPro ? '#F0F9FF' : theme.bg}; 
+          border-color: ${theme.accent}; 
+          color: ${theme.accent}; 
+          font-weight: 500;
         }
-        .checkbox-label:hover { background: ${theme.bg}; }
-        .checkbox-label.checked { border-color: ${theme.accent}; background: ${theme.bg}; }
+        .choice-key { 
+          width: 24px; height: 24px; border: 1px solid #D4D4D4; color: #D4D4D4; 
+          font-size: 12px; display: flex; align-items: center; justify-content: center; 
+          margin-right: 15px; border-radius: 4px; 
+        }
+        .choice-btn.selected .choice-key { border-color: ${theme.accent}; color: ${theme.accent}; background: white; }
+
+        /* CHECKBOXES */
+        .checkbox-label { 
+          display: flex; align-items: center; padding: 12px; cursor: pointer; 
+          border: 1px solid transparent; transition: all 0.2s; width: 100%;
+        }
+        .checkbox-label:hover { background: #F9FAFB; }
+        .checkbox-label.checked { background: #F0F9FF; border-color: ${theme.accent}; }
         
         .check-box {
-          width: 28px; height: 28px; border: 2px solid ${theme.border}; 
-          border-radius: 6px; background: white;
-          margin-right: 20px; display: flex; align-items: center; justify-content: center; flex-shrink: 0;
+          width: 24px; height: 24px; border: 2px solid ${theme.border}; 
+          margin-right: 15px; display: flex; align-items: center; justify-content: center; 
+          border-radius: 4px; flex-shrink: 0;
         }
-        .checkbox-label.checked .check-box { background: ${theme.accent}; border-color: ${theme.accent}; color: ${theme.btnText}; }
-
-        /* RATING / SLIDER */
-        .range-wrapper { padding: 20px 0; text-align: center; }
-        input[type=range] { width: 100%; margin-bottom: 20px; accent-color: ${theme.accent}; cursor: pointer; }
-        .range-value { font-size: 56px; font-weight: 800; color: ${theme.accent}; }
+        .checkbox-label.checked .check-box { background: ${theme.accent}; border-color: ${theme.accent}; color: white; font-weight: bold; }
 
         /* CONTACT GRID */
-        .contact-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; }
-        
+        .contact-group { width: 100%; margin-bottom: 20px; }
+        .contact-label { font-size: 14px; font-weight: 600; color: ${theme.text}; margin-bottom: 8px; display: block; }
+
         /* FOOTER */
-        .footer { margin-top: auto; padding-top: 40px; display: flex; justify-content: space-between; border-top: 1px solid ${theme.border}; }
-        
-        .btn-back { background: transparent; border: none; font-size: 18px; font-weight: 700; color: #94A3B8; cursor: pointer; padding: 10px 20px; }
-        .btn-back:hover { color: #64748B; }
-        .btn-back.hidden { visibility: hidden; }
-
+        .footer { margin-top: auto; padding-top: 60px; display: flex; justify-content: space-between; align-items: center; }
+        .btn-back { background: transparent; border: none; font-size: 16px; font-weight: 600; color: #9CA3AF; cursor: pointer; padding: 10px 20px; }
+        .btn-back:hover { color: ${theme.text}; }
         .btn-next { 
-          background: ${theme.accent}; color: ${theme.btnText}; 
-          padding: 16px 48px; border-radius: ${theme.radius}; 
-          font-size: 20px; font-weight: 700; border: none; cursor: pointer; 
-          box-shadow: 0 4px 10px rgba(0,0,0,0.1); transition: transform 0.1s;
+          background: ${theme.accent}; color: ${theme.btnText}; padding: 12px 36px; 
+          border-radius: 4px; font-size: 18px; font-weight: 600; border: none; cursor: pointer; 
+          transition: transform 0.1s;
         }
-        .btn-next:hover { opacity: 0.9; transform: translateY(-2px); }
-        .btn-next:active { transform: scale(0.98); }
-        .btn-next:disabled { background: #CBD5E1; cursor: not-allowed; box-shadow: none; transform: none; }
+        .btn-next:active { transform: translateY(1px); }
+        .btn-next:disabled { background: #E5E5E5; cursor: not-allowed; }
 
-        /* UTILS */
         .loading, .error { height: 100vh; display: flex; justify-content: center; align-items: center; font-size: 18px; color: #64748B; }
         .error { color: #DC2626; font-weight: bold; }
-
-        /* RESPONSIVE */
-        @media (max-width: 1000px) {
-          .card { padding: 40px; height: auto; min-height: 80vh; aspect-ratio: auto; }
-          .contact-grid { grid-template-columns: 1fr; }
-          .question-title { font-size: 28px; }
-        }
       `}</style>
 
       {/* TOP PROGRESS */}
-      <div className="progress-bar">
-        <div className="progress-fill" style={{ width: `${((index + 1) / questions.length) * 100}%` }} />
-      </div>
+      <div className="progress-bar"><div className="progress-fill" style={{ width: `${((index + 1) / qs.length) * 100}%` }} /></div>
 
       <div className="content-wrapper">
         <div className="card">
           
-          <div className="badge-container">
-            <span className="secure-badge">🔒 End-to-End Encrypted</span>
-          </div>
+          <div className="badge-container"><span className="secure-badge">🔒 End-to-End Encrypted</span></div>
 
-          {/* CONTENT AREA (Centers vertically) */}
           <div style={{ flexGrow: 1, display: 'flex', flexDirection: 'column', justifyContent: 'center' }}>
             
-            <h1 className="question-title">
-              {q.question_text}
-              {q.required && <span className="required-star">*</span>}
-            </h1>
-            
-            {q.description && <div className="description">{q.description}</div>}
+            <div className="question-header">
+              <h1 className="question-title">
+                {prefix} 
+                <span style={{flex: 1}}>{q.question_text}{q.required && <span style={{color:'#DC2626', marginLeft:4}}>*</span>}</span>
+              </h1>
+              {q.description && <div className="description">{q.description}</div>}
+            </div>
 
-            <div className="input-group">
+            <div className="input-wrapper">
               
-              {/* 1. SIMPLE TEXT INPUTS */}
+              {/* TEXT TYPES */}
               {['text', 'email', 'phone', 'number'].includes(q.question_type) && (
                 <input 
                   type={q.question_type === 'number' ? 'number' : 'text'} 
                   placeholder="Type your answer here..." 
-                  autoFocus
+                  autoFocus 
                   value={val || ''} 
-                  onChange={(e) => setAnswers({ ...answers, [q.id]: e.target.value })} 
-                  onKeyDown={(e) => e.key === 'Enter' && handleNext()}
+                  onChange={e => setAnswers({...ans, [q.id]: e.target.value})} 
+                  onKeyDown={e => e.key === 'Enter' && handleNext()} 
                 />
               )}
 
-              {/* 2. LONG TEXT */}
+              {/* LONG TEXT */}
               {q.question_type === 'long_text' && (
                 <textarea 
-                  placeholder="Type a longer answer..."
-                  autoFocus
+                  placeholder="Type your answer here..." 
+                  autoFocus 
                   value={val || ''} 
-                  onChange={(e) => setAnswers({ ...answers, [q.id]: e.target.value })} 
+                  onChange={e => setAnswers({...ans, [q.id]: e.target.value})} 
+                  style={{ border: isPro ? `1px solid #E5E5E5` : undefined, borderRadius: isPro ? 4 : undefined, padding: 15 }} 
                 />
               )}
 
-              {/* 3. CHOICE BUTTONS (Single/YesNo) */}
-              {['single_choice', 'yes_no'].includes(q.question_type) && (q.question_type === 'yes_no' ? ['Yes', 'No'] : q.options).map((opt, i) => (
-                <div key={i} onClick={() => setAnswers({ ...answers, [q.id]: opt })} className={`choice-btn ${val === opt ? 'selected' : ''}`}>
-                  {opt}
-                </div>
-              ))}
+              {/* SINGLE CHOICE */}
+              {['single_choice', 'yes_no'].includes(q.question_type) && (
+                (q.question_type === 'yes_no' ? ['Yes', 'No'] : q.options).map((opt, i) => (
+                  <div key={i} onClick={() => setAnswers({...ans, [q.id]: opt})} className={`choice-btn ${val === opt ? 'selected' : ''}`}>
+                    <div className="choice-key">{String.fromCharCode(65 + i)}</div>
+                    {opt}
+                  </div>
+                ))
+              )}
 
-              {/* 4. CHECKBOXES */}
-              {q.question_type === 'checkbox' && q.options.map((opt, i) => {
-                const curr = val ? JSON.parse(val) : []
-                const isChecked = curr.includes(opt)
-                return (
-                  <label key={i} className={`checkbox-label ${isChecked ? 'checked' : ''}`}>
-                    <input type="checkbox" style={{display:'none'}} checked={isChecked} onChange={(e) => {
-                      let newSel = [...curr]
-                      e.target.checked ? newSel.push(opt) : newSel = newSel.filter(x => x !== opt)
-                      setAnswers({ ...answers, [q.id]: JSON.stringify(newSel) })
-                    }} />
-                    <div className="check-box">{isChecked && '✓'}</div>
-                    <span style={{ fontSize: '18px', fontWeight: '500' }}>{opt}</span>
-                  </label>
-                )
-              })}
+              {/* CHECKBOXES */}
+              {q.question_type === 'checkbox' && (
+                q.options.map((opt, i) => {
+                  const curr = val ? JSON.parse(val) : []
+                  const chk = curr.includes(opt)
+                  return (
+                    <label key={i} className={`checkbox-label ${chk ? 'checked' : ''}`}>
+                      <input type="checkbox" style={{display:'none'}} checked={chk} onChange={e => {
+                        let n = [...curr]
+                        e.target.checked ? n.push(opt) : n = n.filter(x => x !== opt)
+                        setAnswers({...ans, [q.id]: JSON.stringify(n)})
+                      }} />
+                      <div className="check-box">{chk && '✓'}</div>
+                      <span style={{fontSize: 20}}>{opt}</span>
+                    </label>
+                  )
+                })
+              )}
 
-              {/* 5. DROPDOWN */}
+              {/* DROPDOWN */}
               {q.question_type === 'dropdown' && (
-                <select value={val || ''} onChange={(e) => setAnswers({ ...answers, [q.id]: e.target.value })}>
+                <select value={val || ''} onChange={e => setAnswers({...ans, [q.id]: e.target.value})}>
                   <option value="" disabled>Select an option...</option>
                   {q.options.map((o, i) => <option key={i} value={o}>{o}</option>)}
                 </select>
               )}
 
-              {/* 6. RATING / SLIDER */}
+              {/* RATING */}
               {['rating', 'slider'].includes(q.question_type) && (
-                <div className="range-wrapper">
-                  <input 
-                    type="range" min={q.range_min || 1} max={q.range_max || 10} step={1}
-                    value={val || Math.ceil((q.range_max || 10)/2)} 
-                    onChange={(e) => setAnswers({ ...answers, [q.id]: e.target.value })}
+                <div style={{width:'100%', textAlign:'center'}}>
+                  <input type="range" min={q.range_min || 1} max={q.range_max || 10} step={1} 
+                    value={val || Math.ceil((q.range_max || 10) / 2)} 
+                    onChange={e => setAnswers({...ans, [q.id]: e.target.value})} 
+                    style={{width:'100%', marginBottom: 20}}
                   />
-                  <div className="range-value">{val || Math.ceil((q.range_max || 10)/2)}</div>
+                  <div style={{fontSize: 48, fontWeight:'bold', color: theme.accent}}>
+                    {val || Math.ceil((q.range_max || 10) / 2)}
+                  </div>
                 </div>
               )}
 
-              {/* 7. DATE */}
+              {/* DATE */}
               {q.question_type === 'date' && (
-                <input type="date" value={val || ''} onChange={(e) => setAnswers({ ...answers, [q.id]: e.target.value })} />
+                <input type="date" value={val || ''} onChange={e => setAnswers({...ans, [q.id]: e.target.value})} />
               )}
 
-              {/* 8. CONTACT INFO */}
+              {/* CONTACT INFO - Explicit Fields */}
               {q.question_type === 'contact_info' && (
-                <div className="contact-grid">
-                  {['Name', 'Email', 'Phone', 'Company'].map(f => (
-                    <input key={f} type="text" placeholder={f} value={(val || {})[f] || ''} onChange={(e) => updateContact(f, e.target.value)} />
+                <div style={{width: '100%'}}>
+                  {['First Name', 'Last Name', 'Email', 'Phone', 'Company'].map(f => (
+                    <div key={f} className="contact-group">
+                      <span className="contact-label">{f}</span>
+                      <input 
+                        type="text" 
+                        placeholder="..." 
+                        value={(val || {})[f] || ''} 
+                        onChange={e => updateContact(f, e.target.value)} 
+                      />
+                    </div>
                   ))}
                 </div>
               )}
 
-              {/* 9. CONSENT */}
+              {/* CONSENT */}
               {q.question_type === 'consent' && (
-                <label className={`checkbox-label ${consentChecked ? 'checked' : ''}`}>
-                  <input type="checkbox" style={{display:'none'}} checked={consentChecked} onChange={(e) => {
+                <label className={`checkbox-label ${consentChecked ? 'checked' : ''}`} style={{alignItems:'flex-start'}}>
+                  <input type="checkbox" style={{display:'none'}} checked={consentChecked} onChange={e => {
                     setConsentChecked(e.target.checked)
-                    setAnswers({ ...answers, [q.id]: e.target.checked ? "Agreed" : "" })
+                    setAnswers({...ans, [q.id]: e.target.checked ? "Agreed" : ""})
                   }} />
-                  <div className="check-box">{consentChecked && '✓'}</div>
+                  <div className="check-box" style={{marginTop: 4}}>{consentChecked && '✓'}</div>
                   <div>
-                    <div style={{ fontWeight: 'bold', fontSize: '18px' }}>I Agree</div>
-                    <div style={{ color: '#64748B', fontSize: '14px' }}>I accept the terms and conditions.</div>
+                    <div style={{fontWeight:'bold', fontSize: 18}}>I Agree</div>
+                    <div style={{color: '#6B7280', fontSize: 14}}>I accept the terms and conditions.</div>
                   </div>
                 </label>
               )}
@@ -465,13 +454,12 @@ export default function FormPage() {
             </div>
           </div>
 
-          {/* NAV FOOTER */}
           <div className="footer">
-            <button className={`btn-back ${index === 0 ? 'hidden' : ''}`} onClick={() => setIndex(index - 1)}>
+            <button className={`btn-back ${idx === 0 ? 'hidden' : ''}`} style={{visibility: idx === 0 ? 'hidden' : 'visible'}} onClick={() => setIdx(idx - 1)}>
               ← Back
             </button>
             <button className="btn-next" onClick={handleNext} disabled={q.question_type === 'consent' && !consentChecked}>
-              {index < questions.length - 1 ? (q.button_text || 'Next') : 'Submit Securely'}
+              {idx < qs.length - 1 ? (q.button_text || 'Next') : 'Submit'}
             </button>
           </div>
 
