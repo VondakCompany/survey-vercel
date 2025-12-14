@@ -5,7 +5,7 @@ import forge from 'node-forge'
 
 // --- CONFIG ---
 const SUPABASE_URL = 'https://xrgrlfpjeovjeshebxya.supabase.co'
-const SUPABASE_KEY = 'sb_publishable_TgJkb2-QML1h1aOAYAVupg_njoyLImS' // Replace with your actual key
+const SUPABASE_KEY = 'sb_publishable_TgJkb2-QML1h1aOAYAVupg_njoyLImS'
 const supabase = createClient(SUPABASE_URL, SUPABASE_KEY)
 
 export default function FormPage() {
