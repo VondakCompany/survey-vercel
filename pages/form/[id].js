@@ -12,7 +12,6 @@ const supabase = createClient(SUPABASE_URL, SUPABASE_KEY)
 
 // ------------------------------------------------------------------
 // THEME ENGINE
-// Matches Python 'THEMES' dictionary exactly.
 // ------------------------------------------------------------------
 const THEMES = {
   pro: {
@@ -20,11 +19,11 @@ const THEMES = {
     bg: "#FFFFFF",
     cardBg: "#FFFFFF",
     text: "#1A1A1A",
-    accent: "#0445AF",      // Deep Typeform Blue
-    border: "#A3D5FF",      // Light Blue for Underlines
-    radius: "0px",          // Sharp corners
+    accent: "#0445AF",      // Typeform Blue
+    border: "#A3D5FF",      // Light Blue Underline
+    radius: "0px",
     btnText: "#FFFFFF",
-    shadow: "none",         // Flat design
+    shadow: "none",
     inputStyle: "underline",
     align: "left",
     numberStyle: "arrow",
@@ -37,7 +36,7 @@ const THEMES = {
     text: "#1E293B",
     accent: "#2563EB",      // Bright Blue
     border: "#E2E8F0",
-    radius: "16px",         // Rounded corners
+    radius: "16px",
     btnText: "#FFFFFF",
     shadow: "0 25px 50px -12px rgba(0, 0, 0, 0.15)",
     inputStyle: "box",
@@ -54,7 +53,7 @@ export default function FormPage() {
   // ----------------------------------------------------------------
   // STATE
   // ----------------------------------------------------------------
-  const [questions, setQuestions] = useState([])
+  const [questions, setQuestions] = useState([]) 
   const [index, setIndex] = useState(0)
   const [answers, setAnswers] = useState({})
   const [keys, setKeys] = useState({ q: null, p: null })
@@ -65,7 +64,7 @@ export default function FormPage() {
   const [consentChecked, setConsentChecked] = useState(false)
 
   // ----------------------------------------------------------------
-  // 1. INITIALIZATION & DATA FETCHING
+  // 1. INITIALIZATION
   // ----------------------------------------------------------------
   useEffect(() => {
     if (!id) return
@@ -73,7 +72,6 @@ export default function FormPage() {
     const initializeForm = async () => {
       try {
         // A. Fetch Encryption Keys from Secure DB Store
-        // We no longer rely on the URL hash for keys to keep links clean.
         const { data: keyData, error: keyError } = await supabase
           .from('survey_keys')
           .select('*')
@@ -130,7 +128,7 @@ export default function FormPage() {
   }, [id])
 
   // ----------------------------------------------------------------
-  // CRYPTO HELPER (AES-GCM)
+  // CRYPTO HELPER
   // ----------------------------------------------------------------
   const decryptAES = (b64Cipher, key) => {
     if (!b64Cipher) return ""
@@ -160,29 +158,23 @@ export default function FormPage() {
     try {
       setLoading(true)
       
-      // A. Serialize Answers
       const payload = JSON.stringify(answers)
-      
-      // B. Generate Session Key
-      const sessionKey = forge.random.getBytesSync(32)
+      const sKey = forge.random.getBytesSync(32)
       const iv = forge.random.getBytesSync(12)
 
-      // C. Encrypt Payload (AES-GCM)
-      const cipher = forge.cipher.createCipher('AES-GCM', sessionKey)
-      cipher.start({ iv })
-      cipher.update(forge.util.createBuffer(payload))
-      cipher.finish()
+      const c = forge.cipher.createCipher('AES-GCM', sKey)
+      c.start({ iv })
+      c.update(forge.util.createBuffer(payload))
+      c.finish()
       
       const encryptedData = cipher.output.getBytes()
       const tag = cipher.mode.tag.getBytes()
 
-      // D. Encrypt Session Key (RSA-OAEP)
       const publicKey = forge.pki.publicKeyFromPem(keys.p)
-      const encryptedSessionKey = publicKey.encrypt(sessionKey, 'RSA-OAEP', { 
+      const encryptedSessionKey = publicKey.encrypt(sKey, 'RSA-OAEP', { 
         md: forge.md.sha256.create() 
       })
 
-      // E. Upload
       const { error: uploadError } = await supabase.from('responses').insert({ 
         form_id: id, 
         response: {
@@ -196,8 +188,6 @@ export default function FormPage() {
       if (uploadError) throw uploadError
       
       alert('Success! Your response has been securely encrypted and submitted.')
-      
-      // Reset
       setAnswers({})
       setIndex(0)
       setConsentChecked(false)
@@ -216,30 +206,25 @@ export default function FormPage() {
     const q = questions[index]
     const val = answers[q.id]
     
-    // Required Field Check
+    // Validation
     if (q.required && !['title', 'info', 'consent'].includes(q.question_type)) {
-      
-      // Contact Info Validation
       if (q.question_type === 'contact_info') {
         if (!val || !val['First Name'] || !val['Email']) {
           alert('Please fill in at least your First Name and Email.')
           return
         }
       }
-      // General Validation
       else if (!val || (Array.isArray(val) && val.length === 0) || (typeof val === 'string' && val.trim() === '')) { 
         alert('This question is required.')
         return 
       }
     }
 
-    // Consent Check
     if (q.question_type === 'consent' && !consentChecked) {
-      alert("You must agree to the terms to continue.")
+      alert("You must agree to continue.")
       return
     }
 
-    // Navigate
     if (index < questions.length - 1) {
       setIndex(index + 1)
       setConsentChecked(false) 
@@ -248,7 +233,6 @@ export default function FormPage() {
     }
   }
 
-  // Update logic for multi-field contact inputs
   const updateContact = (field, text) => {
     const currentAnswers = answers[questions[index].id] || {}
     setAnswers({ 
@@ -267,92 +251,59 @@ export default function FormPage() {
   const q = questions[index]
   const val = answers[q.id]
 
-  // CSS Variables derived from Theme
+  // CSS Variables
   const isPro = theme.inputStyle === 'underline'
   const align = theme.align === 'left' ? 'flex-start' : 'center'
   const textAlign = theme.align === 'left' ? 'left' : 'center'
   
-  // Specific Input Styles
   const inputBorderCSS = isPro 
     ? `border: none; border-bottom: 2px solid ${theme.border}; border-radius: 0; background: transparent; padding: 10px 0;` 
     : `border: 2px solid ${theme.border}; border-radius: ${theme.radius}; background: ${theme.cardBg}; padding: 16px;`
 
-  // Number Prefix (The blue arrow)
   const numberPrefix = theme.numberStyle === 'arrow' 
     ? <span className="arrow-prefix">{index + 1} <span style={{fontSize:'0.8em'}}>➜</span></span> 
     : null
 
   return (
     <div className="page-container">
-      {/* FULL GLOBAL CSS 
-          Embedded directly to guarantee the look without external CSS files.
-      */}
       <style jsx global>{`
-        body { 
-          margin: 0; 
-          background-color: ${theme.bg}; 
-          color: ${theme.text}; 
-          font-family: ${theme.font}; 
-        }
+        body { margin: 0; background-color: ${theme.bg}; color: ${theme.text}; font-family: ${theme.font}; }
         * { box-sizing: border-box; }
         
         .page-container { min-height: 100vh; display: flex; flex-direction: column; align-items: center; }
         
-        /* PROGRESS BAR */
         .progress-bar { width: 100%; height: 4px; background: #E5E7EB; position: fixed; top: 0; z-index: 50; }
         .progress-fill { height: 100%; background: ${theme.accent}; transition: width 0.5s ease; }
         
         .content-wrapper { flex-grow: 1; width: 100%; display: flex; justify-content: center; align-items: center; padding: 40px 20px; }
         
-        /* THE MAIN CARD */
         .card {
-          background: ${theme.cardBg};
-          width: 100%;
-          max-width: 1000px;
-          min-height: 600px;
-          border-radius: ${theme.radius};
-          box-shadow: ${theme.shadow};
-          padding: 60px 80px;
-          display: flex;
-          flex-direction: column;
-          position: relative;
+          background: ${theme.cardBg}; width: 100%; max-width: 1000px; min-height: 600px;
+          border-radius: ${theme.radius}; box-shadow: ${theme.shadow};
+          padding: 60px 80px; display: flex; flex-direction: column; position: relative;
         }
 
         .badge-container { display: flex; justify-content: center; margin-bottom: 40px; }
-        .secure-badge { 
-          background: #F0FDF4; color: #15803D; font-size: 11px; font-weight: 800; 
-          padding: 6px 14px; border-radius: 20px; border: 1px solid #BBF7D0; 
-          text-transform: uppercase; letter-spacing: 0.5px;
-        }
+        .secure-badge { background: #F0FDF4; color: #15803D; font-size: 11px; font-weight: 800; padding: 6px 14px; border-radius: 20px; border: 1px solid #BBF7D0; text-transform: uppercase; }
 
-        /* QUESTION HEADER */
         .question-header { margin-bottom: 40px; }
         .question-title { 
-          font-size: 28px; font-weight: 400; color: ${theme.text}; 
-          text-align: ${textAlign}; margin-bottom: 10px; 
-          display: flex; align-items: flex-start; justify-content: ${align}; 
+          font-size: 28px; font-weight: 400; color: ${theme.text}; text-align: ${textAlign}; 
+          margin-bottom: 10px; display: flex; align-items: flex-start; justify-content: ${align}; 
           line-height: 1.4;
         }
         .arrow-prefix { color: ${theme.accent}; margin-right: 12px; font-weight: bold; }
         .required-star { color: #DC2626; margin-left: 4px; font-size: 0.8em; vertical-align: top; }
         
-        .description { 
-          font-size: 18px; color: #6B7280; text-align: ${textAlign}; 
-          margin-top: 8px; font-style: italic; white-space: pre-wrap; 
-        }
+        .description { font-size: 18px; color: #6B7280; text-align: ${textAlign}; margin-top: 8px; font-style: italic; white-space: pre-wrap; }
 
-        /* INPUT WRAPPER */
         .input-wrapper { width: 100%; display: flex; flex-direction: column; gap: 30px; max-width: 800px; margin: 0 auto; align-items: ${align}; }
         
-        input, select, textarea {
-          width: 100%; font-size: 24px; color: ${theme.text}; outline: none; transition: border-color 0.2s;
-          ${inputBorderCSS}
-        }
+        input, select, textarea { width: 100%; font-size: 24px; color: ${theme.text}; outline: none; transition: border-color 0.2s; ${inputBorderCSS} }
         input::placeholder, textarea::placeholder { color: #A3D5FF; opacity: 1; }
         input:focus, textarea:focus, select:focus { border-color: ${theme.accent}; }
         textarea { min-height: 150px; resize: none; }
 
-        /* CHOICE BUTTONS */
         .choice-btn {
           width: 100%; text-align: left; padding: 15px 20px; 
           border: 1px solid ${isPro ? '#E5E5E5' : theme.border};
@@ -361,67 +312,35 @@ export default function FormPage() {
           cursor: pointer; transition: all 0.2s; display: flex; align-items: center;
         }
         .choice-btn:hover { background: #FAFAFA; border-color: ${theme.accent}; }
-        .choice-btn.selected { 
-          background: ${isPro ? '#F0F9FF' : theme.bg}; 
-          border-color: ${theme.accent}; 
-          color: ${theme.accent}; 
-          font-weight: 500;
-        }
-        .choice-key { 
-          width: 28px; height: 28px; border: 1px solid #D4D4D4; color: #D4D4D4; 
-          font-size: 14px; display: flex; align-items: center; justify-content: center; 
-          margin-right: 15px; border-radius: 4px; font-weight: bold;
-        }
+        .choice-btn.selected { background: ${isPro ? '#F0F9FF' : theme.bg}; border-color: ${theme.accent}; color: ${theme.accent}; font-weight: 500; }
+        .choice-key { width: 28px; height: 28px; border: 1px solid #D4D4D4; color: #D4D4D4; font-size: 14px; display: flex; align-items: center; justify-content: center; margin-right: 15px; border-radius: 4px; font-weight: bold; }
         .choice-btn.selected .choice-key { border-color: ${theme.accent}; color: ${theme.accent}; background: white; }
 
-        /* CHECKBOXES */
-        .checkbox-label { 
-          display: flex; align-items: center; padding: 12px; cursor: pointer; 
-          border: 1px solid transparent; transition: all 0.2s; width: 100%;
-        }
+        .checkbox-label { display: flex; align-items: center; padding: 12px; cursor: pointer; border: 1px solid transparent; transition: all 0.2s; width: 100%; }
         .checkbox-label:hover { background: #F9FAFB; }
         .checkbox-label.checked { background: #F0F9FF; border-color: ${theme.accent}; }
-        
-        .check-box {
-          width: 24px; height: 24px; border: 2px solid ${theme.border}; 
-          margin-right: 15px; display: flex; align-items: center; justify-content: center; 
-          border-radius: 4px; flex-shrink: 0; background: white;
-        }
+        .check-box { width: 24px; height: 24px; border: 2px solid ${theme.border}; margin-right: 15px; display: flex; align-items: center; justify-content: center; border-radius: 4px; flex-shrink: 0; background: white; }
         .checkbox-label.checked .check-box { background: ${theme.accent}; border-color: ${theme.accent}; color: white; font-weight: bold; font-size: 16px; }
 
-        /* CONTACT GRID */
         .contact-group { width: 100%; margin-bottom: 20px; }
         .contact-label { font-size: 16px; font-weight: 600; color: ${theme.text}; margin-bottom: 8px; display: block; }
 
-        /* RATING */
         .range-wrapper { width: 100%; text-align: center; padding: 20px 0; }
         input[type=range] { width: 100%; margin-bottom: 20px; accent-color: ${theme.accent}; cursor: pointer; border: none; padding: 0; }
         .range-value { font-size: 64px; font-weight: 800; color: ${theme.accent}; }
 
-        /* FOOTER */
         .footer { margin-top: auto; padding-top: 60px; display: flex; justify-content: space-between; align-items: center; border-top: 1px solid ${theme.border}; }
-        
-        .btn-back { 
-          background: transparent; border: none; font-size: 18px; font-weight: 600; 
-          color: #9CA3AF; cursor: pointer; padding: 10px 20px; transition: color 0.2s; 
-        }
+        .btn-back { background: transparent; border: none; font-size: 18px; font-weight: 600; color: #9CA3AF; cursor: pointer; padding: 10px 20px; transition: color 0.2s; }
         .btn-back:hover { color: ${theme.text}; }
         .btn-back.hidden { visibility: hidden; }
-        
-        .btn-next { 
-          background: ${theme.accent}; color: ${theme.btnText}; padding: 14px 42px; 
-          border-radius: 4px; font-size: 20px; font-weight: 700; border: none; cursor: pointer; 
-          transition: transform 0.1s; box-shadow: 0 4px 6px rgba(0,0,0,0.1);
-        }
+        .btn-next { background: ${theme.accent}; color: ${theme.btnText}; padding: 14px 42px; border-radius: 4px; font-size: 20px; font-weight: 700; border: none; cursor: pointer; transition: transform 0.1s; box-shadow: 0 4px 6px rgba(0,0,0,0.1); }
         .btn-next:hover { opacity: 0.9; transform: translateY(-1px); }
         .btn-next:active { transform: translateY(1px); }
         .btn-next:disabled { background: #E5E5E5; cursor: not-allowed; box-shadow: none; transform: none; }
 
-        /* LOADING/ERROR SCREENS */
         .loading-screen, .error-screen { height: 100vh; display: flex; justify-content: center; align-items: center; font-size: 18px; color: #64748B; font-family: sans-serif; }
         .error-screen { color: #DC2626; font-weight: bold; }
         
-        /* RESPONSIVE */
         @media (max-width: 800px) {
           .card { padding: 30px; height: auto; min-height: 80vh; border: none; box-shadow: none; }
           .question-title { font-size: 24px; }
@@ -429,8 +348,7 @@ export default function FormPage() {
         }
       `}</style>
 
-      {/* TOP PROGRESS */}
-      <div className="progress-bar"><div className="progress-fill" style={{ width: `${((index + 1) / qs.length) * 100}%` }} /></div>
+      <div className="progress-bar"><div className="progress-fill" style={{ width: `${((index + 1) / questions.length) * 100}%` }} /></div>
 
       <div className="content-wrapper">
         <div className="card">
@@ -439,7 +357,6 @@ export default function FormPage() {
 
           <div style={{ flexGrow: 1, display: 'flex', flexDirection: 'column', justifyContent: 'center' }}>
             
-            {/* QUESTION HEADER */}
             <div className="question-header">
               <h1 className="question-title">
                 {numberPrefix} 
@@ -448,10 +365,8 @@ export default function FormPage() {
               {q.description && <div className="description">{q.description}</div>}
             </div>
 
-            {/* INPUT AREA */}
             <div className="input-wrapper">
               
-              {/* 1. SIMPLE TEXT (Text, Email, Phone, Number) */}
               {['text', 'email', 'phone', 'number'].includes(q.question_type) && (
                 <input 
                   type={q.question_type === 'number' ? 'number' : 'text'} 
@@ -463,7 +378,6 @@ export default function FormPage() {
                 />
               )}
 
-              {/* 2. LONG TEXT */}
               {q.question_type === 'long_text' && (
                 <textarea 
                   placeholder="Type your answer here..." 
@@ -478,7 +392,6 @@ export default function FormPage() {
                 />
               )}
 
-              {/* 3. SINGLE CHOICE / YES_NO */}
               {['single_choice', 'yes_no'].includes(q.question_type) && (
                 (q.question_type === 'yes_no' ? ['Yes', 'No'] : q.options).map((opt, i) => (
                   <div key={i} onClick={() => setAnswers({...ans, [q.id]: opt})} className={`choice-btn ${val === opt ? 'selected' : ''}`}>
@@ -488,7 +401,6 @@ export default function FormPage() {
                 ))
               )}
 
-              {/* 4. CHECKBOXES */}
               {q.question_type === 'checkbox' && (
                 q.options.map((opt, i) => {
                   const curr = val ? JSON.parse(val) : []
@@ -507,7 +419,6 @@ export default function FormPage() {
                 })
               )}
 
-              {/* 5. DROPDOWN */}
               {q.question_type === 'dropdown' && (
                 <select value={val || ''} onChange={e => setAnswers({...ans, [q.id]: e.target.value})}>
                   <option value="" disabled>Select an option...</option>
@@ -515,7 +426,6 @@ export default function FormPage() {
                 </select>
               )}
 
-              {/* 6. RATING / SLIDER */}
               {['rating', 'slider'].includes(q.question_type) && (
                 <div className="range-wrapper">
                   <input type="range" min={q.range_min || 1} max={q.range_max || 10} step={1} 
@@ -528,12 +438,10 @@ export default function FormPage() {
                 </div>
               )}
 
-              {/* 7. DATE */}
               {q.question_type === 'date' && (
                 <input type="date" value={val || ''} onChange={e => setAnswers({...ans, [q.id]: e.target.value})} />
               )}
 
-              {/* 8. CONTACT INFO (Multi-Field) */}
               {q.question_type === 'contact_info' && (
                 <div style={{width: '100%'}}>
                   {['First Name', 'Last Name', 'Email', 'Phone', 'Company', 'Address', 'City', 'Zip'].map(f => (
@@ -550,7 +458,6 @@ export default function FormPage() {
                 </div>
               )}
 
-              {/* 9. CONSENT */}
               {q.question_type === 'consent' && (
                 <label className={`checkbox-label ${consentChecked ? 'checked' : ''}`} style={{alignItems:'flex-start'}}>
                   <input type="checkbox" style={{display:'none'}} checked={consentChecked} onChange={e => {
