@@ -11,17 +11,18 @@ const SUPABASE_KEY = 'sb_publishable_TgJkb2-QML1h1aOAYAVupg_njoyLImS'
 const supabase = createClient(SUPABASE_URL, SUPABASE_KEY)
 
 // ------------------------------------------------------------------
-// THEME ENGINE (Matches Python Professional Theme)
+// THEME ENGINE (Strict Match to Python "Professional" Theme)
 // ------------------------------------------------------------------
 const THEME = {
-  bg: "#F3F4F6",         // Slate 100 Background
+  bg: "#F3F4F6",         // Slate 100 (Canvas Background)
   cardBg: "#FFFFFF",     // Pure White Card
-  text: "#111827",       // Near Black
-  subtext: "#6B7280",    // Grey description
-  accent: "#0445AF",     // Typeform Blue
-  border: "#E5E7EB",
-  radius: "8px",
-  shadow: "0 20px 25px -5px rgba(0, 0, 0, 0.1), 0 10px 10px -5px rgba(0, 0, 0, 0.04)",
+  text: "#000000",       // Pure Black text (Sharp)
+  subtext: "#555555",    // Dark Grey description
+  accent: "#262627",     // PROFESSIONAL BLACK (Matches Python UI)
+  highlight: "#0445AF",  // Blue ONLY for specific highlights (like active inputs)
+  border: "#E0E0E0",     // Light Grey border
+  radius: "4px",         // Tighter radius (Less bubbly)
+  shadow: "0 4px 12px rgba(0,0,0,0.08)", // Subtler shadow
   font: "-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif"
 }
 
@@ -50,21 +51,17 @@ export default function FormPage() {
 
     const initializeForm = async () => {
       try {
-        // Fetch Keys
         const { data: keyData, error: keyError } = await supabase
           .from('survey_keys').select('*').eq('form_id', id).single()
-        if (keyError || !keyData) throw new Error("Survey not found or unpublished.")
+        if (keyError || !keyData) throw new Error("Survey not found.")
 
-        // Decode Keys
         const qKey = forge.util.decode64(keyData.q_key)
         setKeys({ q: qKey, p: keyData.p_key })
 
-        // Fetch Content
         const { data: qData, error: qError } = await supabase
           .from('questions').select('*').eq('form_id', id).order('order')
         if (qError) throw qError
 
-        // Decrypt Content
         const decrypted = qData.map(row => ({
           ...row,
           question_text: decryptAES(row.question_text, qKey),
@@ -76,7 +73,7 @@ export default function FormPage() {
         setLoading(false)
 
       } catch (e) {
-        setError(e.message || "Failed to load secure survey.")
+        setError("Failed to load secure survey.")
         setLoading(false)
       }
     }
@@ -84,7 +81,6 @@ export default function FormPage() {
     initializeForm()
   }, [id])
 
-  // Focus input on slide change
   useEffect(() => {
     if (inputRef.current) inputRef.current.focus()
   }, [index])
@@ -110,7 +106,6 @@ export default function FormPage() {
     const c = forge.cipher.createCipher('AES-GCM', sKey)
     c.start({ iv }); c.update(forge.util.createBuffer(JSON.stringify(data))); c.finish()
     
-    // Asymmetric Encrypt the Session Key
     const pub = forge.pki.publicKeyFromPem(keys.p)
     const encKey = pub.encrypt(sKey, 'RSA-OAEP', { md: forge.md.sha256.create() })
 
@@ -131,11 +126,10 @@ export default function FormPage() {
       const encryptedPayload = encryptResponse(answers)
       const { error } = await supabase.from('responses').insert({ form_id: id, response: encryptedPayload })
       if (error) throw error
-      
       alert('Response securely recorded.')
       window.location.reload()
     } catch (e) {
-      alert('Upload Error: ' + e.message)
+      alert('Upload Error')
       setLoading(false)
     }
   }
@@ -144,13 +138,8 @@ export default function FormPage() {
     const q = questions[index]
     const val = answers[q.id]
     
-    // Validation
-    if (['title', 'info'].includes(q.question_type)) {
-       goStep(1); return
-    }
-    if (q.question_type === 'consent' && !consentChecked) {
-      alert("Please check the box to continue."); return
-    }
+    if (['title', 'info'].includes(q.question_type)) { goStep(1); return }
+    if (q.question_type === 'consent' && !consentChecked) { alert("Please check the box to continue."); return }
     if (q.required) {
         if (!val || (typeof val === 'string' && !val.trim())) { alert("Required"); return }
     }
@@ -166,13 +155,13 @@ export default function FormPage() {
 
   const handleChoice = (opt) => {
     setAnswers({...answers, [questions[index].id]: opt})
-    setTimeout(() => goStep(1), 250) // Slight delay for visual feedback
+    setTimeout(() => goStep(1), 150)
   }
 
   // ----------------------------------------------------------------
   // RENDERER
   // ----------------------------------------------------------------
-  if (loading || !questions.length) return <div style={{height:'100vh', display:'flex', justifyContent:'center', alignItems:'center', fontFamily:'sans-serif', color:'#666'}}>Loading...</div>
+  if (loading || !questions.length) return <div style={{height:'100vh', display:'flex', justifyContent:'center', alignItems:'center', fontFamily:'sans-serif', color:'#555'}}>Loading...</div>
   
   const q = questions[index]
   const val = answers[q.id]
@@ -181,85 +170,86 @@ export default function FormPage() {
 
   return (
     <div className="container">
-      {/* CSS STYLING MATCHING PYTHON EXACTLY */}
       <style jsx global>{`
-        body { margin: 0; background-color: ${THEME.bg}; color: ${THEME.text}; font-family: ${THEME.font}; }
+        body { margin: 0; background-color: ${THEME.bg}; color: ${THEME.text}; font-family: ${THEME.font}; -webkit-font-smoothing: antialiased; -moz-osx-font-smoothing: grayscale; }
         .container { min-height: 100vh; display: flex; flex-direction: column; align-items: center; justify-content: center; }
         
         .progress-bar { position: fixed; top: 0; left: 0; height: 4px; background: ${THEME.accent}; transition: width 0.3s; z-index: 99; }
         
-        /* CARD */
+        /* CARD: SHARPER, LESS BUBBLY */
         .card {
-          background: ${THEME.cardBg}; width: 100%; max-width: 900px; min-height: 600px;
+          background: ${THEME.cardBg}; width: 100%; max-width: 900px; min-height: 550px;
           border-radius: ${THEME.radius}; box-shadow: ${THEME.shadow};
+          border: 1px solid ${THEME.border};
           padding: 60px 80px; display: flex; flex-direction: column; position: relative;
         }
 
-        /* TYPOGRAPHY - EXACT MATCH */
+        /* TYPOGRAPHY: PROFESSIONAL WEIGHTS */
         .question-title { 
-          font-size: ${isTitle ? '40px' : (isCentered ? '34px' : '28px')}; 
-          font-weight: ${isTitle ? '800' : (isCentered ? '700' : '400')}; 
+          font-size: ${isTitle ? '40px' : (isCentered ? '32px' : '26px')}; 
+          font-weight: ${isTitle ? '700' : (isCentered ? '600' : '500')}; /* Reduced from 800 to 700/500 for cleaner look */
           text-align: ${isCentered ? 'center' : 'left'};
-          margin: 0 0 15px 0; color: #000; line-height: 1.3;
+          margin: 0 0 15px 0; color: #000; line-height: 1.25;
         }
         .description { 
-          font-size: ${isCentered ? '20px' : '18px'}; 
-          font-weight: ${isCentered ? '400' : '300'};
+          font-size: 18px; 
+          font-weight: 300;
           text-align: ${isCentered ? 'center' : 'left'};
           color: ${THEME.subtext}; white-space: pre-wrap; margin-bottom: 40px;
         }
 
-        /* INPUTS - BLUE UNDERLINE */
+        /* INPUTS - BLUE HIGHLIGHT ONLY ON FOCUS */
         .tf-input {
-          width: 100%; font-size: 26px; color: ${THEME.accent}; 
-          border: none; border-bottom: 2px solid #E5E7EB; background: transparent; 
-          padding: 10px 0; outline: none; transition: border-color 0.3s;
+          width: 100%; font-size: 24px; color: #000; 
+          border: none; border-bottom: 1px solid ${THEME.border}; background: transparent; 
+          padding: 8px 0; outline: none; transition: border-color 0.2s;
         }
-        .tf-input::placeholder { color: #D1D5DB; opacity: 1; }
-        .tf-input:focus { border-bottom-color: ${THEME.accent}; }
+        .tf-input::placeholder { color: #BBB; opacity: 1; font-weight: 300; }
+        .tf-input:focus { border-bottom: 2px solid ${THEME.highlight}; }
 
-        /* BUTTONS */
+        /* BUTTONS - MONOCHROME PROFESSIONAL */
         .btn-action {
           background-color: ${THEME.accent}; color: white;
-          font-size: 20px; font-weight: 700;
-          padding: 12px 36px; border-radius: 4px; border: none; cursor: pointer;
-          transition: transform 0.1s, opacity 0.2s;
+          font-size: 18px; font-weight: 600;
+          padding: 12px 32px; border-radius: ${THEME.radius}; border: none; cursor: pointer;
+          transition: all 0.2s;
         }
         .btn-action:hover { opacity: 0.9; transform: translateY(-1px); }
-        .btn-action:active { transform: translateY(1px); }
-        .btn-action:disabled { background-color: #E5E5E5; color: #A3A3A3; cursor: not-allowed; transform: none; }
+        .btn-action:active { transform: translateY(0); }
+        .btn-action:disabled { background-color: #E0E0E0; color: #999; cursor: not-allowed; transform: none; }
         
-        .btn-back { background: transparent; border: none; color: ${THEME.subtext}; font-weight: 600; font-size: 16px; cursor: pointer; }
+        .btn-back { background: transparent; border: none; color: ${THEME.subtext}; font-weight: 500; font-size: 15px; cursor: pointer; }
         .btn-back:hover { color: #000; }
 
-        /* CHOICES */
+        /* CHOICE TILES */
         .choice-item {
-          padding: 14px 20px; border: 1px solid ${THEME.border}; border-radius: 4px;
-          margin-bottom: 10px; cursor: pointer; display: flex; align-items: center;
-          font-size: 18px; transition: all 0.2s; background: white;
+          padding: 12px 18px; border: 1px solid ${THEME.border}; border-radius: ${THEME.radius};
+          margin-bottom: 8px; cursor: pointer; display: flex; align-items: center;
+          font-size: 16px; transition: all 0.15s; background: white; color: #000;
         }
-        .choice-item:hover { border-color: ${THEME.accent}; background-color: #FAFAFA; }
-        .choice-item.selected { background-color: #F0F9FF; border-color: ${THEME.accent}; color: ${THEME.accent}; font-weight: 600; }
+        .choice-item:hover { border-color: ${THEME.highlight}; background-color: #F8FAFC; color: ${THEME.highlight}; }
+        .choice-item.selected { background-color: #F0F9FF; border-color: ${THEME.highlight}; color: ${THEME.highlight}; font-weight: 600; }
         .key-badge { 
-          width: 28px; height: 28px; border: 1px solid #DDD; color: #999; 
-          border-radius: 4px; display: flex; align-items: center; justify-content: center;
-          margin-right: 15px; font-size: 12px; font-weight: bold;
+          width: 24px; height: 24px; border: 1px solid #DDD; color: #777; 
+          border-radius: 3px; display: flex; align-items: center; justify-content: center;
+          margin-right: 15px; font-size: 11px; font-weight: 600;
         }
-        .choice-item.selected .key-badge { border-color: ${THEME.accent}; color: ${THEME.accent}; background: white; }
+        .choice-item.selected .key-badge { border-color: ${THEME.highlight}; color: ${THEME.highlight}; background: white; }
 
         /* CONSENT CHECKBOX */
-        .consent-label { display: flex; align-items: flex-start; cursor: pointer; padding: 20px 0; }
+        .consent-label { display: flex; align-items: flex-start; cursor: pointer; padding: 20px 0; user-select: none; }
         .custom-check {
-          width: 24px; height: 24px; border: 2px solid ${THEME.border}; border-radius: 4px;
+          width: 22px; height: 22px; border: 1px solid ${THEME.border}; border-radius: 3px;
           margin-right: 15px; display: flex; align-items: center; justify-content: center;
-          flex-shrink: 0; background: white; transition: all 0.2s;
+          flex-shrink: 0; background: white; transition: all 0.2s; color: white; font-size: 14px;
         }
-        .consent-label.checked .custom-check { background: ${THEME.accent}; border-color: ${THEME.accent}; color: white; }
+        .consent-label:hover .custom-check { border-color: ${THEME.highlight}; }
+        .consent-label.checked .custom-check { background: ${THEME.highlight}; border-color: ${THEME.highlight}; }
 
         /* FOOTER */
-        .footer { margin-top: auto; padding-top: 40px; display: flex; justify-content: space-between; align-items: center; }
-        .hint-text { font-size: 13px; color: ${THEME.subtext}; margin-left: 10px; }
-        .counter { position: absolute; bottom: 30px; right: 40px; font-size: 14px; font-weight: 700; color: #9CA3AF; }
+        .footer { margin-top: auto; padding-top: 40px; display: flex; justify-content: space-between; align-items: center; width: 100%; border-top: 1px solid #FAFAFA; }
+        .hint-text { font-size: 12px; color: ${THEME.subtext}; margin-left: 12px; font-weight: 400; }
+        .counter { position: absolute; bottom: 30px; right: 40px; font-size: 13px; font-weight: 600; color: #CCC; }
         
         .content-area { flex-grow: 1; display: flex; flex-direction: column; justify-content: center; }
         .input-group { width: 100%; display: flex; flex-direction: column; gap: 20px; align-items: ${isCentered ? 'center' : 'flex-start'}; }
@@ -273,7 +263,7 @@ export default function FormPage() {
         <div className="content-area">
           
           {/* HEADER */}
-          <div>
+          <div style={{width: '100%'}}>
             <h1 className="question-title">
               {q.question_text}{q.required && <span style={{color:'#DC2626', fontSize:'0.6em', marginLeft: 4, verticalAlign:'top'}}>*</span>}
             </h1>
@@ -294,7 +284,7 @@ export default function FormPage() {
                   onChange={e => setAnswers({...answers, [q.id]: e.target.value})}
                   onKeyDown={e => e.key === 'Enter' && handleNext()}
                 />
-                <button className="btn-action" style={{marginLeft: 20, padding: '8px 20px', fontSize: 16}} onClick={handleNext}>OK ✓</button>
+                <button className="btn-action" style={{marginLeft: 20, padding: '10px 24px', fontSize: 16, backgroundColor: THEME.highlight}} onClick={handleNext}>OK ✓</button>
               </div>
             )}
 
@@ -331,8 +321,8 @@ export default function FormPage() {
                 }}>
                   <div className="custom-check">{consentChecked && '✓'}</div>
                   <div>
-                    <div style={{fontSize: 18, fontWeight: '700', marginBottom: 4}}>I accept the terms</div>
-                    <div style={{fontSize: 14, color: THEME.subtext}}>I have read and agree to the terms and conditions above.</div>
+                    <div style={{fontSize: 16, fontWeight: '600', marginBottom: 4, color: THEME.text}}>I accept the terms</div>
+                    <div style={{fontSize: 13, color: THEME.subtext}}>I have read and agree to the terms and conditions described above.</div>
                   </div>
                 </label>
               </div>
@@ -345,13 +335,32 @@ export default function FormPage() {
                    min={q.range_min || 1} max={q.range_max || 10} 
                    value={val || Math.ceil((q.range_max||10)/2)}
                    onChange={e => setAnswers({...answers, [q.id]: e.target.value})}
-                   style={{width:'80%', accentColor: THEME.accent, cursor:'pointer'}}
+                   style={{width:'80%', accentColor: THEME.highlight, cursor:'pointer'}}
                  />
-                 <div style={{fontSize: 40, fontWeight: 800, color: THEME.accent, marginTop: 10}}>
+                 <div style={{fontSize: 40, fontWeight: 700, color: THEME.highlight, marginTop: 10}}>
                    {val || Math.ceil((q.range_max||10)/2)}
                  </div>
                </div>
             )}
+
+             {/* CONTACT INFO */}
+             {q.question_type === 'contact_info' && (
+                <div style={{width: '100%'}}>
+                  {['First Name', 'Last Name', 'Email', 'Phone'].map(f => (
+                    <div key={f} style={{marginBottom: 20}}>
+                      <label style={{fontSize: 13, fontWeight: 600, color: THEME.text, display:'block', marginBottom: 5}}>{f}</label>
+                      <input 
+                        className="tf-input"
+                        style={{fontSize: 18}}
+                        type={f === 'Email' ? 'email' : 'text'} 
+                        placeholder="..." 
+                        value={(val || {})[f] || ''} 
+                        onChange={e => updateContact(f, e.target.value)} 
+                      />
+                    </div>
+                  ))}
+                </div>
+              )}
 
           </div>
         </div>
@@ -361,16 +370,16 @@ export default function FormPage() {
           <button className="btn-back" style={{opacity: index===0 ? 0 : 1}} onClick={() => goStep(-1)}>← Back</button>
           
           {/* Main Action Button (Start / Next / Submit) */}
-          {(['title', 'info', 'consent'].includes(q.question_type) || index === questions.length - 1) && (
-            <button className="btn-action" onClick={handleNext} disabled={q.question_type === 'consent' && !consentChecked}>
-              {index < questions.length - 1 ? (q.button_text || 'Continue') : 'Submit'}
-            </button>
+          {(['title', 'info', 'consent', 'contact_info', 'long_text'].includes(q.question_type) || index === questions.length - 1) && (
+            <div style={{display:'flex', alignItems:'center'}}>
+              <button className="btn-action" onClick={handleNext} disabled={q.question_type === 'consent' && !consentChecked}>
+                {index < questions.length - 1 ? (q.button_text || 'Continue') : 'Submit'}
+              </button>
+              {['long_text'].includes(q.question_type) && <div className="hint-text">press <strong>Enter ↵</strong></div>}
+            </div>
           )}
           
-          {/* Hint Text for Text Inputs */}
-          {['text','email','number','long_text'].includes(q.question_type) && (
-            <div className="hint-text">press <strong>Enter ↵</strong></div>
-          )}
+          {/* Hint Text for Text Inputs is handled next to the inline OK button */}
         </div>
 
         {/* COUNTER */}
