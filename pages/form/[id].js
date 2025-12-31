@@ -205,7 +205,7 @@ export default function FormPage() {
           color: ${THEME.subtext}; white-space: pre-wrap; margin-bottom: 40px;
         }
 
-        /* CONSENT SPECIFIC SCROLL BOX */
+        /* CONSENT SPECIFIC SCROLL BOX - FIXED FORMATTING */
         .scroll-desc {
             max-height: 200px;
             overflow-y: auto;
@@ -216,6 +216,7 @@ export default function FormPage() {
             margin-bottom: 20px;
             color: #444;
             border-radius: 4px;
+            white-space: pre-wrap; /* This preserves newlines and spaces */
         }
 
         /* INPUTS - BLUE HIGHLIGHT ONLY ON FOCUS */
