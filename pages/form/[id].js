@@ -348,7 +348,8 @@ export default function FormPage() {
                 }}>
                   <div className="custom-check">{consentChecked && '✓'}</div>
                   <div>
-                    <div style={{fontSize: 16, fontWeight: '600', marginBottom: 4, color: THEME.text}}>I accept the terms</div>
+                    {/* Updated to dynamically use survey text */}
+                    <div style={{fontSize: 16, fontWeight: '600', marginBottom: 4, color: THEME.text}}>{q.checkbox_label || "I accept the terms"}</div>
                     <div style={{fontSize: 13, color: THEME.subtext}}>I have read and agree to the terms and conditions described above.</div>
                   </div>
                 </label>
