@@ -18,8 +18,8 @@ const THEME = {
   cardBg: "#FFFFFF",     // Pure White Card
   text: "#000000",       // Pure Black text (Sharp)
   subtext: "#555555",    // Dark Grey description
-  accent: "#262627",     // PROFESSIONAL BLACK (Matches Python UI)
-  highlight: "#0445AF",  // Blue ONLY for specific highlights (like active inputs)
+  accent: "#262627",     // PROFESSIONAL BLACK (Matches Python UI Buttons)
+  highlight: "#0445AF",  // Blue ONLY for active inputs/selections
   border: "#E0E0E0",     // Light Grey border
   radius: "4px",         // Tighter radius (Less bubbly)
   shadow: "0 4px 12px rgba(0,0,0,0.08)", // Subtler shadow
@@ -158,6 +158,12 @@ export default function FormPage() {
     setTimeout(() => goStep(1), 150)
   }
 
+  const updateContact = (field, val) => {
+      const qId = questions[index].id
+      const current = answers[qId] || {}
+      setAnswers({ ...answers, [qId]: { ...current, [field]: val } })
+  }
+
   // ----------------------------------------------------------------
   // RENDERER
   // ----------------------------------------------------------------
@@ -176,18 +182,19 @@ export default function FormPage() {
         
         .progress-bar { position: fixed; top: 0; left: 0; height: 4px; background: ${THEME.accent}; transition: width 0.3s; z-index: 99; }
         
-        /* CARD: SHARPER, LESS BUBBLY */
+        /* CARD: SHARPER, LESS BUBBLY, SCROLLABLE */
         .card {
           background: ${THEME.cardBg}; width: 100%; max-width: 900px; min-height: 550px;
           border-radius: ${THEME.radius}; box-shadow: ${THEME.shadow};
           border: 1px solid ${THEME.border};
           padding: 60px 80px; display: flex; flex-direction: column; position: relative;
+          overflow-y: auto; max-height: 90vh; /* Handle very long content */
         }
 
         /* TYPOGRAPHY: PROFESSIONAL WEIGHTS */
         .question-title { 
           font-size: ${isTitle ? '40px' : (isCentered ? '32px' : '26px')}; 
-          font-weight: ${isTitle ? '700' : (isCentered ? '600' : '500')}; /* Reduced from 800 to 700/500 for cleaner look */
+          font-weight: ${isTitle ? '700' : (isCentered ? '600' : '500')};
           text-align: ${isCentered ? 'center' : 'left'};
           margin: 0 0 15px 0; color: #000; line-height: 1.25;
         }
@@ -196,6 +203,19 @@ export default function FormPage() {
           font-weight: 300;
           text-align: ${isCentered ? 'center' : 'left'};
           color: ${THEME.subtext}; white-space: pre-wrap; margin-bottom: 40px;
+        }
+
+        /* CONSENT SPECIFIC SCROLL BOX */
+        .scroll-desc {
+            max-height: 200px;
+            overflow-y: auto;
+            background: #FAFAFA;
+            border: 1px solid #EEE;
+            padding: 15px;
+            font-size: 14px;
+            margin-bottom: 20px;
+            color: #444;
+            border-radius: 4px;
         }
 
         /* INPUTS - BLUE HIGHLIGHT ONLY ON FOCUS */
@@ -231,13 +251,14 @@ export default function FormPage() {
         .choice-item.selected { background-color: #F0F9FF; border-color: ${THEME.highlight}; color: ${THEME.highlight}; font-weight: 600; }
         .key-badge { 
           width: 24px; height: 24px; border: 1px solid #DDD; color: #777; 
-          border-radius: 3px; display: flex; align-items: center; justify-content: center;
+          border-radius: 50%; /* Rounded for radio look */
+          display: flex; align-items: center; justify-content: center;
           margin-right: 15px; font-size: 11px; font-weight: 600;
         }
-        .choice-item.selected .key-badge { border-color: ${THEME.highlight}; color: ${THEME.highlight}; background: white; }
+        .choice-item.selected .key-badge { border-color: ${THEME.highlight}; color: ${THEME.highlight}; background: white; border-width: 2px; }
 
         /* CONSENT CHECKBOX */
-        .consent-label { display: flex; align-items: flex-start; cursor: pointer; padding: 20px 0; user-select: none; }
+        .consent-label { display: flex; align-items: flex-start; cursor: pointer; padding: 10px 0; user-select: none; }
         .custom-check {
           width: 22px; height: 22px; border: 1px solid ${THEME.border}; border-radius: 3px;
           margin-right: 15px; display: flex; align-items: center; justify-content: center;
@@ -267,7 +288,12 @@ export default function FormPage() {
             <h1 className="question-title">
               {q.question_text}{q.required && <span style={{color:'#DC2626', fontSize:'0.6em', marginLeft: 4, verticalAlign:'top'}}>*</span>}
             </h1>
-            {q.description && <div className="description">{q.description}</div>}
+            {/* If Consent, show scrollable description box instead of standard text */}
+            {q.question_type === 'consent' ? (
+                <div className="scroll-desc">{q.description}</div>
+            ) : (
+                q.description && <div className="description">{q.description}</div>
+            )}
           </div>
 
           {/* INPUTS */}
@@ -284,7 +310,7 @@ export default function FormPage() {
                   onChange={e => setAnswers({...answers, [q.id]: e.target.value})}
                   onKeyDown={e => e.key === 'Enter' && handleNext()}
                 />
-                <button className="btn-action" style={{marginLeft: 20, padding: '10px 24px', fontSize: 16, backgroundColor: THEME.highlight}} onClick={handleNext}>OK ✓</button>
+                <button className="btn-action" style={{marginLeft: 20, padding: '10px 24px', fontSize: 16}} onClick={handleNext}>OK ✓</button>
               </div>
             )}
 
@@ -370,7 +396,8 @@ export default function FormPage() {
           <button className="btn-back" style={{opacity: index===0 ? 0 : 1}} onClick={() => goStep(-1)}>← Back</button>
           
           {/* Main Action Button (Start / Next / Submit) */}
-          {(['title', 'info', 'consent', 'contact_info', 'long_text'].includes(q.question_type) || index === questions.length - 1) && (
+          {/* NOTE: We hide this button for simple text inputs because they have an inline 'OK' button */}
+          {(!['text', 'email', 'phone', 'number', 'single_choice', 'yes_no'].includes(q.question_type) || index === questions.length - 1) && (
             <div style={{display:'flex', alignItems:'center'}}>
               <button className="btn-action" onClick={handleNext} disabled={q.question_type === 'consent' && !consentChecked}>
                 {index < questions.length - 1 ? (q.button_text || 'Continue') : 'Submit'}
@@ -378,8 +405,6 @@ export default function FormPage() {
               {['long_text'].includes(q.question_type) && <div className="hint-text">press <strong>Enter ↵</strong></div>}
             </div>
           )}
-          
-          {/* Hint Text for Text Inputs is handled next to the inline OK button */}
         </div>
 
         {/* COUNTER */}
