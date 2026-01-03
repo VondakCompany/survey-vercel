@@ -14,17 +14,35 @@ const supabase = createClient(SUPABASE_URL, SUPABASE_KEY)
 // THEME ENGINE
 // ------------------------------------------------------------------
 const THEME = {
-  bg: "#F3F4F6",         
-  cardBg: "#FFFFFF",     
-  text: "#000000",       
-  subtext: "#555555",    
-  accent: "#262627",     
-  highlight: "#0445AF",  
-  border: "#E0E0E0",     
-  radius: "4px",         
+  bg: "#F3F4F6",          
+  cardBg: "#FFFFFF",      
+  text: "#000000",        
+  subtext: "#555555",     
+  accent: "#262627",      
+  highlight: "#0445AF",   
+  border: "#E0E0E0",      
+  radius: "4px",          
   shadow: "0 4px 12px rgba(0,0,0,0.08)",
   font: "-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif"
 }
+
+// ------------------------------------------------------------------
+// ICONS
+// ------------------------------------------------------------------
+const StarIcon = ({ filled, onClick, onMouseEnter, onMouseLeave }) => (
+  <svg 
+    onClick={onClick} 
+    onMouseEnter={onMouseEnter}
+    onMouseLeave={onMouseLeave}
+    width="40" height="40" viewBox="0 0 24 24" 
+    fill={filled ? THEME.highlight : "none"} 
+    stroke={filled ? THEME.highlight : "#ccc"} 
+    strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"
+    style={{ cursor: 'pointer', transition: 'all 0.1s', marginRight: 8 }}
+  >
+    <polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"></polygon>
+  </svg>
+)
 
 export default function FormPage() {
   const router = useRouter()
@@ -41,6 +59,8 @@ export default function FormPage() {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
   const [consentChecked, setConsentChecked] = useState(false)
+  const [hoverRating, setHoverRating] = useState(0) // For star hover effect
+
   const inputRef = useRef(null)
 
   // ----------------------------------------------------------------
@@ -49,10 +69,7 @@ export default function FormPage() {
   const decryptAES = (b64Cipher, key) => {
     if (!b64Cipher) return ""
     try {
-      // safe decode
       const raw = forge.util.decode64(b64Cipher)
-      
-      // Extract IV (12 bytes), Tag (16 bytes), Ciphertext (Rest)
       const iv = raw.substring(0, 12)
       const tag = raw.substring(12, 28)
       const ct = raw.substring(28)
@@ -62,10 +79,7 @@ export default function FormPage() {
       decipher.update(forge.util.createBuffer(ct))
       
       const pass = decipher.finish()
-      if (!pass) {
-          console.error("Decryption Integrity Check Failed")
-          return ""
-      }
+      if (!pass) return ""
       return JSON.parse(decipher.output.toString())
     } catch (e) { 
       console.error("Decryption Error:", e)
@@ -92,7 +106,6 @@ export default function FormPage() {
         data: forge.util.encode64(c.output.getBytes())
         }
     } catch (e) {
-        console.error("Encryption Error:", e)
         throw e
     }
   }
@@ -104,35 +117,20 @@ export default function FormPage() {
     if (!id) return
 
     const initializeForm = async () => {
-      console.log("Initializing Form ID:", id)
       try {
-        // 1. Fetch Keys
         const { data: keyData, error: keyError } = await supabase
           .from('survey_keys').select('*').eq('form_id', id).single()
         
-        if (keyError) {
-            console.error("Key Fetch Error:", keyError)
-            throw new Error("Could not fetch survey encryption keys.")
-        }
-        if (!keyData) throw new Error("Survey not found.")
+        if (keyError || !keyData) throw new Error("Survey not found.")
 
-        // Decode Question Key
         const qKey = forge.util.decode64(keyData.q_key)
         setKeys({ q: qKey, p: keyData.p_key })
-        console.log("Keys loaded successfully.")
 
-        // 2. Fetch Questions
         const { data: qData, error: qError } = await supabase
           .from('questions').select('*').eq('form_id', id).order('order')
         
-        if (qError) {
-            console.error("Question Fetch Error:", qError)
-            throw qError
-        }
+        if (qError) throw qError
         
-        console.log(`Fetched ${qData.length} encrypted questions. Decrypting...`)
-
-        // 3. Decrypt Questions
         const decrypted = qData.map((row, i) => {
           try {
               return {
@@ -140,20 +138,18 @@ export default function FormPage() {
                 question_text: decryptAES(row.question_text, qKey),
                 description: decryptAES(row.description, qKey),
                 options: decryptAES(row.options, qKey) || [],
-                // Safety check for older rows that might lack this column
+                included_fields: decryptAES(row.included_fields, qKey) || ["First Name", "Email"],
                 checkbox_label: row.checkbox_label || "I accept the terms and conditions"
               }
           } catch (err) {
-              console.error(`Failed to decrypt row ${i}:`, err)
               return null
           }
-        }).filter(q => q !== null) // Remove failed decryptions
+        }).filter(q => q !== null)
 
         setQuestions(decrypted)
         setLoading(false)
 
       } catch (e) {
-        console.error("Critical Init Error:", e)
         setError(e.message || "Failed to load secure survey.")
         setLoading(false)
       }
@@ -162,9 +158,9 @@ export default function FormPage() {
     initializeForm()
   }, [id])
 
-  // Focus input on slide change
   useEffect(() => {
     if (inputRef.current) inputRef.current.focus()
+    setHoverRating(0)
   }, [index])
 
 
@@ -189,11 +185,18 @@ export default function FormPage() {
     const q = questions[index]
     const val = answers[q.id]
     
-    // Logic Validation
     if (['title', 'info'].includes(q.question_type)) { goStep(1); return }
     if (q.question_type === 'consent' && !consentChecked) { alert("Please check the box to continue."); return }
     if (q.required) {
-        if (!val || (typeof val === 'string' && !val.trim())) { alert("Required field"); return }
+      if (q.question_type === 'contact_info') {
+         const fields = q.included_fields || []
+         const current = val || {}
+         for (let f of fields) {
+            if (!current[f] || !current[f].trim()) { alert(`Please enter your ${f}`); return }
+         }
+      } else if (!val || (typeof val === 'string' && !val.trim())) { 
+          alert("Required field"); return 
+      }
     }
     goStep(1)
   }
@@ -207,7 +210,6 @@ export default function FormPage() {
 
   const handleChoice = (opt) => {
     setAnswers({...answers, [questions[index].id]: opt})
-    // Auto-advance for single choice
     setTimeout(() => goStep(1), 150)
   }
 
@@ -220,26 +222,14 @@ export default function FormPage() {
   // ----------------------------------------------------------------
   // RENDERER
   // ----------------------------------------------------------------
-  if (loading) return (
-      <div style={{height:'100vh', display:'flex', justifyContent:'center', alignItems:'center', flexDirection:'column', fontFamily:'sans-serif', color:'#555'}}>
-          <div style={{marginBottom: 20}}>Loading Secure Survey...</div>
-      </div>
-  )
-
-  if (error) return (
-      <div style={{height:'100vh', display:'flex', justifyContent:'center', alignItems:'center', color:'red', fontFamily:'sans-serif'}}>
-          Error: {error}
-      </div>
-  )
-
+  if (loading) return <div style={{height:'100vh', display:'flex', justifyContent:'center', alignItems:'center'}}>Loading...</div>
+  if (error) return <div style={{height:'100vh', display:'flex', justifyContent:'center', alignItems:'center', color:'red'}}>{error}</div>
   if (!questions.length) return <div>No questions found.</div>
   
   const q = questions[index]
   const val = answers[q.id]
   const isCentered = ['title', 'info'].includes(q.question_type)
   const isTitle = q.question_type === 'title'
-
-  // Input types that have their own "Next" flow (inline buttons or auto-advance)
   const hasInlineNext = ['text', 'email', 'phone', 'number', 'single_choice', 'yes_no'].includes(q.question_type)
   const isLastSlide = index === questions.length - 1
 
@@ -268,11 +258,15 @@ export default function FormPage() {
             max-height: 200px; overflow-y: auto; background: #FAFAFA; border: 1px solid #EEE;
             padding: 15px; font-size: 14px; margin-bottom: 20px; color: #444; border-radius: 4px; white-space: pre-wrap;
         }
+        
+        /* INPUTS */
         .tf-input {
           width: 100%; font-size: 24px; color: #000; border: none; border-bottom: 1px solid ${THEME.border}; 
           background: transparent; padding: 8px 0; outline: none; transition: border-color 0.2s;
         }
         .tf-input:focus { border-bottom: 2px solid ${THEME.highlight}; }
+        
+        /* BUTTONS */
         .btn-action {
           background-color: ${THEME.accent}; color: white; font-size: 18px; font-weight: 600;
           padding: 12px 32px; border-radius: ${THEME.radius}; border: none; cursor: pointer; transition: all 0.2s;
@@ -281,6 +275,8 @@ export default function FormPage() {
         .btn-action:disabled { background-color: #E0E0E0; color: #999; cursor: not-allowed; transform: none; }
         .btn-back { background: transparent; border: none; color: ${THEME.subtext}; font-weight: 500; font-size: 15px; cursor: pointer; }
         .btn-back:hover { color: #000; }
+        
+        /* CHOICES */
         .choice-item {
           padding: 12px 18px; border: 1px solid ${THEME.border}; border-radius: ${THEME.radius};
           margin-bottom: 8px; cursor: pointer; display: flex; align-items: center; font-size: 16px; transition: all 0.15s; background: white; color: #000;
@@ -292,6 +288,8 @@ export default function FormPage() {
           display: flex; align-items: center; justify-content: center; margin-right: 15px; font-size: 11px; font-weight: 600;
         }
         .choice-item.selected .key-badge { border-color: ${THEME.highlight}; color: ${THEME.highlight}; background: white; border-width: 2px; }
+        
+        /* CONSENT */
         .consent-label { display: flex; align-items: flex-start; cursor: pointer; padding: 10px 0; user-select: none; }
         .custom-check {
           width: 22px; height: 22px; border: 1px solid ${THEME.border}; border-radius: 3px;
@@ -299,6 +297,32 @@ export default function FormPage() {
           flex-shrink: 0; background: white; transition: all 0.2s; color: white; font-size: 14px;
         }
         .consent-label.checked .custom-check { background: ${THEME.highlight}; border-color: ${THEME.highlight}; }
+        
+        /* SLIDER CUSTOMIZATION */
+        .slider-container { width: 100%; position: relative; padding: 20px 0; }
+        .custom-range {
+            -webkit-appearance: none; width: 100%; height: 6px; background: #E5E7EB; border-radius: 3px; outline: none;
+        }
+        .custom-range::-webkit-slider-thumb {
+            -webkit-appearance: none; appearance: none; width: 24px; height: 24px; border-radius: 50%; 
+            background: ${THEME.highlight}; cursor: pointer; border: 2px solid white; box-shadow: 0 2px 6px rgba(0,0,0,0.2);
+            transition: transform 0.1s;
+        }
+        .custom-range::-webkit-slider-thumb:hover { transform: scale(1.1); }
+        .range-labels { display: flex; justify-content: space-between; margin-top: 15px; font-size: 14px; color: ${THEME.subtext}; font-weight: 600; }
+        .range-val-bubble {
+            position: absolute; top: -15px; left: 50%; transform: translateX(-50%); 
+            background: ${THEME.highlight}; color: white; padding: 4px 10px; border-radius: 12px; font-size: 14px; font-weight: bold;
+        }
+
+        /* CONTACT GRID */
+        .contact-grid {
+            display: grid; grid-template-columns: 1fr 1fr; gap: 30px; width: 100%; margin-top: 10px;
+        }
+        .contact-field { display: flex; flex-direction: column; }
+        .contact-field.full { grid-column: span 2; }
+        .contact-label { font-size: 13px; font-weight: 700; color: ${THEME.highlight}; margin-bottom: 5px; text-transform: uppercase; letter-spacing: 0.5px; }
+
         .footer { margin-top: auto; padding-top: 40px; display: flex; justify-content: space-between; align-items: center; width: 100%; border-top: 1px solid #FAFAFA; }
         .hint-text { font-size: 12px; color: ${THEME.subtext}; margin-left: 12px; font-weight: 400; }
         .counter { position: absolute; bottom: 30px; right: 40px; font-size: 13px; font-weight: 600; color: #CCC; }
@@ -373,31 +397,65 @@ export default function FormPage() {
               </div>
             )}
 
-            {/* SLIDERS */}
-            {['rating', 'slider'].includes(q.question_type) && (
-               <div style={{width:'100%', textAlign:'center'}}>
-                 <input type="range" min={q.range_min || 1} max={q.range_max || 10} 
-                   value={val || Math.ceil((q.range_max||10)/2)}
-                   onChange={e => setAnswers({...answers, [q.id]: e.target.value})}
-                   style={{width:'80%', accentColor: THEME.highlight, cursor:'pointer'}}
-                 />
-                 <div style={{fontSize: 40, fontWeight: 700, color: THEME.highlight, marginTop: 10}}>{val || Math.ceil((q.range_max||10)/2)}</div>
+            {/* RATING (STARS) - FIXED */}
+            {q.question_type === 'rating' && (
+               <div style={{width:'100%', display:'flex', alignItems:'center', marginTop: 10}}>
+                 {[...Array(q.range_max || 5)].map((_, i) => {
+                    const idx = i + 1;
+                    return (
+                        <StarIcon 
+                            key={i} 
+                            filled={idx <= (hoverRating || val || 0)}
+                            onClick={() => {
+                                setAnswers({...answers, [q.id]: idx})
+                                setTimeout(() => goStep(1), 300) // Auto-advance with delay
+                            }}
+                            onMouseEnter={() => setHoverRating(idx)}
+                            onMouseLeave={() => setHoverRating(0)}
+                        />
+                    )
+                 })}
                </div>
             )}
 
-             {/* CONTACT INFO */}
-             {q.question_type === 'contact_info' && (
-                <div style={{width: '100%'}}>
-                  {['First Name', 'Last Name', 'Email', 'Phone'].map(f => (
-                    <div key={f} style={{marginBottom: 20}}>
-                      <label style={{fontSize: 13, fontWeight: 600, color: THEME.text, display:'block', marginBottom: 5}}>{f}</label>
-                      <input className="tf-input" style={{fontSize: 18}} type={f === 'Email' ? 'email' : 'text'} 
-                        placeholder="..." value={(val || {})[f] || ''} onChange={e => updateContact(f, e.target.value)} 
-                      />
-                    </div>
-                  ))}
+            {/* SLIDER - PROFESSIONAL */}
+            {q.question_type === 'slider' && (
+              <div className="slider-container">
+                <div className="range-val-bubble">{val || Math.ceil((q.range_max||10)/2)}</div>
+                <input type="range" className="custom-range"
+                  min={q.range_min || 0} max={q.range_max || 10} 
+                  value={val || Math.ceil((q.range_max||10)/2)}
+                  onChange={e => setAnswers({...answers, [q.id]: e.target.value})}
+                />
+                <div className="range-labels">
+                    <span>{q.range_min || 0}</span>
+                    <span>{q.range_max || 10}</span>
                 </div>
-              )}
+              </div>
+            )}
+
+             {/* CONTACT INFO - REDESIGNED */}
+             {q.question_type === 'contact_info' && (
+                <div className="contact-grid">
+                  {(q.included_fields || ["First Name", "Email"]).map(f => {
+                    // Check if it's a name field to put it in a half-column, otherwise full width
+                    const isName = f.toLowerCase().includes('name')
+                    return (
+                        <div key={f} className={`contact-field ${isName ? '' : 'full'}`}>
+                            <label className="contact-label">{f}</label>
+                            <input 
+                                className="tf-input" 
+                                style={{fontSize: 20}} 
+                                type={f.includes('Email') ? 'email' : 'text'} 
+                                placeholder="..." 
+                                value={(val || {})[f] || ''} 
+                                onChange={e => updateContact(f, e.target.value)} 
+                            />
+                        </div>
+                    )
+                  })}
+                </div>
+             )}
           </div>
         </div>
 
@@ -406,7 +464,7 @@ export default function FormPage() {
           <button className="btn-back" style={{opacity: index===0 ? 0 : 1}} onClick={() => goStep(-1)}>← Back</button>
           
           {/* Main Action Button Logic */}
-          {(!hasInlineNext || isLastSlide) && (
+          {(!hasInlineNext || isLastSlide || q.question_type === 'rating') && (
             <div style={{display:'flex', alignItems:'center'}}>
               <button className="btn-action" onClick={handleNext} disabled={q.question_type === 'consent' && !consentChecked}>
                 {isLastSlide ? 'Submit' : (q.button_text || 'Continue')}
