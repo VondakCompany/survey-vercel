@@ -150,8 +150,8 @@ export default function FormPage() {
       setAnswers({ ...answers, [qId]: { ...current, [field]: val } })
   }
 
-  if (loading) return <div style={{display:'flex', height:'100vh', justifyContent:'center', alignItems:'center'}}>Loading...</div>
-  if (error) return <div style={{color:'red'}}>Error: {error}</div>
+  if (loading) return <div style={{display:'flex', height:'100vh', justifyContent:'center', alignItems:'center', fontFamily: 'Arial'}}>Loading...</div>
+  if (error) return <div style={{color:'red', padding:20, fontFamily: 'Arial'}}>Error: {error}</div>
   if (!questions.length) return <div>Error loading form</div>
 
   const q = questions[index]
@@ -187,25 +187,29 @@ export default function FormPage() {
       {/* DYNAMIC THEME INJECTION */}
       <style jsx global>{`
         body { margin: 0; background-color: ${theme.bg}; color: ${theme.text}; font-family: ${theme.font_family}; }
-        .container { min-height: 100vh; display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 20px; box-sizing:border-box; }
+        
+        * { box-sizing: border-box; outline: none; }
+        
+        .container { min-height: 100vh; display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 20px; }
         .progress-bar { position: fixed; top: 0; left: 0; height: 4px; background: ${theme.accent}; transition: width 0.3s; z-index: 99; }
         
         .card {
           background: ${theme.card}; width: 100%; max-width: 800px; min-height: 500px;
           border-radius: ${theme.radius}px; 
           border: 1px solid ${theme.border};
-          box-shadow: 0 10px 25px rgba(0,0,0,0.1);
+          box-shadow: 0 10px 30px rgba(0,0,0,0.05);
           padding: 60px; display: flex; flex-direction: column; position: relative;
         }
         
         .question-title { 
-          font-size: ${isTitle ? '36px' : (isCentered ? '30px' : '24px')}; 
-          font-weight: ${isTitle ? '400' : '600'};
-          text-align: ${isCentered ? 'center' : 'left'}; margin: 0 0 10px 0; color: ${theme.text};
+          font-size: ${isTitle ? '40px' : (isCentered ? '32px' : '26px')}; 
+          font-weight: ${isTitle ? 'bold' : '500'};
+          text-align: ${isCentered ? 'center' : 'left'}; margin: 0 0 15px 0; color: ${theme.text};
+          line-height: 1.3;
         }
         .description { 
-          font-size: 16px; font-weight: 400; text-align: ${isCentered ? 'center' : 'left'};
-          color: ${theme.subtext}; margin-bottom: 30px; line-height: 1.5;
+          font-size: 18px; font-weight: 300; text-align: ${isCentered ? 'center' : 'left'};
+          color: ${theme.subtext}; margin-bottom: 35px; line-height: 1.5;
         }
 
         .btn-action {
@@ -217,17 +221,20 @@ export default function FormPage() {
         
         .tf-input {
             width: 100%; border: none; border-bottom: 1px solid ${theme.border};
-            background: transparent; padding: 10px 0; font-size: 24px; color: ${theme.text}; outline: none;
+            background: transparent; padding: 10px 0; font-size: 24px; color: ${theme.text};
+            transition: border-color 0.2s;
         }
         .tf-input:focus { border-bottom: 2px solid ${theme.accent}; }
+        ::placeholder { color: ${theme.subtext}; opacity: 0.4; }
         
         .choice-item {
           padding: 15px; border: 1px solid ${theme.border}; border-radius: ${theme.radius}px;
-          margin-bottom: 10px; cursor: pointer; display: flex; align-items: center; font-size: 16px; 
-          background: ${theme.bg}; color: ${theme.text}; transition: all 0.1s;
+          margin-bottom: 10px; cursor: pointer; display: flex; align-items: center; font-size: 18px; 
+          background: ${theme.bg}; color: ${theme.text}; transition: all 0.15s;
         }
         .choice-item:hover, .choice-item.selected { 
-            border-color: ${theme.accent}; background: ${theme.card}; color: ${theme.accent}; box-shadow: 0 0 0 1px ${theme.accent};
+            border-color: ${theme.accent}; background: ${theme.card}; color: ${theme.accent}; 
+            box-shadow: 0 0 0 1px ${theme.accent};
         }
         .key-badge { 
           width: 28px; height: 28px; border: 1px solid ${theme.border}; color: ${theme.subtext}; border-radius: 4px; 
@@ -244,15 +251,22 @@ export default function FormPage() {
             width: 100%; padding: 12px; border: 1px solid ${theme.border}; border-radius: ${theme.radius}px; 
             background: ${theme.bg}; color: ${theme.text}; box-sizing: border-box; font-size:16px;
         }
+        .contact-field input:focus { border-color: ${theme.accent}; }
         
         .footer { margin-top: auto; padding-top: 20px; display: flex; justify-content: space-between; align-items: center; width: 100%; }
+        
+        /* SCROLLBAR */
+        ::-webkit-scrollbar { width: 8px; }
+        ::-webkit-scrollbar-track { background: transparent; }
+        ::-webkit-scrollbar-thumb { background: ${theme.border}; border-radius: 4px; }
+        ::-webkit-scrollbar-thumb:hover { background: ${theme.subtext}; }
       `}</style>
 
       <div className="progress-bar" style={{ width: `${((index + 1) / questions.length) * 100}%` }} />
 
       <div className="card">
         <div style={{ flexGrow: 1 }}>
-          <h1 className="question-title">{q.question_text}{q.required && <span style={{color:'red'}}>*</span>}</h1>
+          <h1 className="question-title">{q.question_text}{q.required && <span style={{color: theme.accent, marginLeft: 5}}>*</span>}</h1>
           {q.description && <div className="description">{q.description}</div>}
 
           <div style={{ width: '100%', marginTop: 20 }}>
@@ -273,14 +287,14 @@ export default function FormPage() {
 
             {/* LONG TEXT */}
             {q.question_type === 'long_text' && (
-              <textarea className="tf-input" placeholder="Type..." value={val || ''}
+              <textarea className="tf-input" placeholder="Type your answer here..." value={val || ''}
                 onChange={e => setAnswers({...answers, [q.id]: e.target.value})}
-                style={{minHeight: 120, resize:'none', border: `1px solid ${theme.border}`, borderRadius: theme.radius, padding: 15}}
+                style={{minHeight: 120, resize:'none', border: `1px solid ${theme.border}`, borderRadius: theme.radius, padding: 15, fontSize: 18}}
               />
             )}
 
             {/* CHOICES */}
-            {['single_choice', 'yes_no'].includes(q.question_type) && (
+            {['single_choice', 'yes_no', 'dropdown'].includes(q.question_type) && (
               <div>
                 {(q.question_type === 'yes_no' ? ['Yes', 'No'] : q.options).map((opt, i) => (
                   <div key={i} className={`choice-item ${val === opt ? 'selected' : ''}`} onClick={() => handleChoice(opt)}>
@@ -328,7 +342,7 @@ export default function FormPage() {
 
             {/* CONSENT */}
             {q.question_type === 'consent' && (
-                <label style={{display:'flex', alignItems:'center', cursor:'pointer', padding: 15, border: `1px solid ${theme.border}`, borderRadius: theme.radius}}>
+                <label style={{display:'flex', alignItems:'center', cursor:'pointer', padding: 15, border: `1px solid ${theme.border}`, borderRadius: theme.radius, marginTop: 20}}>
                     <input type="checkbox" style={{width: 20, height: 20, marginRight: 15}} 
                         checked={consentChecked} onChange={e => {setConsentChecked(e.target.checked); setAnswers({...answers, [q.id]: e.target.checked})}} 
                     />
@@ -341,8 +355,8 @@ export default function FormPage() {
 
         {/* FOOTER */}
         <div className="footer">
-          {index > 0 ? <button style={{background:'none', border:'none', cursor:'pointer', color: theme.subtext}} onClick={() => goStep(-1)}>Back</button> : <div></div>}
-          {(!['text', 'email', 'phone', 'number', 'single_choice', 'yes_no'].includes(q.question_type) || index === questions.length - 1) && (
+          {index > 0 ? <button style={{background:'none', border:'none', cursor:'pointer', color: theme.subtext, fontWeight: 'bold'}} onClick={() => goStep(-1)}>Back</button> : <div></div>}
+          {(!['text', 'email', 'phone', 'number', 'single_choice', 'yes_no', 'dropdown'].includes(q.question_type) || index === questions.length - 1) && (
             <button className="btn-action" onClick={next}>
               {index === questions.length - 1 ? 'Submit' : (q.button_text || 'Continue')}
             </button>
