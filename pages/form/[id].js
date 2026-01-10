@@ -207,10 +207,15 @@ export default function FormPage() {
           text-align: ${isCentered ? 'center' : 'left'}; margin: 0 0 15px 0; color: ${theme.text};
           line-height: 1.3;
         }
+        
+        /* Render HTML content safely for rich text support */
+        .question-title p { margin: 0; }
+        
         .description { 
           font-size: 18px; font-weight: 300; text-align: ${isCentered ? 'center' : 'left'};
           color: ${theme.subtext}; margin-bottom: 35px; line-height: 1.5;
         }
+        .description p { margin: 0; }
 
         .btn-action {
             background: ${theme.accent}; color: ${theme.accent_text}; 
@@ -266,8 +271,10 @@ export default function FormPage() {
 
       <div className="card">
         <div style={{ flexGrow: 1 }}>
-          <h1 className="question-title">{q.question_text}{q.required && <span style={{color: theme.accent, marginLeft: 5}}>*</span>}</h1>
-          {q.description && <div className="description">{q.description}</div>}
+          {/* Use dangerouslySetInnerHTML to render rich text from Python editor */}
+          <div className="question-title" dangerouslySetInnerHTML={{__html: q.question_text + (q.required ? `<span style="color:${theme.accent}; margin-left:5px">*</span>` : '')}} />
+          
+          {q.description && <div className="description" dangerouslySetInnerHTML={{__html: q.description}} />}
 
           <div style={{ width: '100%', marginTop: 20 }}>
             
