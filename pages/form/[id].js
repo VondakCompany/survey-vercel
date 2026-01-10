@@ -89,7 +89,7 @@ export default function FormPage() {
                     description: decrypt(r.description, k),
                     options: decrypt(r.options, k) || [],
                     included_fields: decrypt(r.included_fields, k) || [],
-                    checkbox_label: r.checkbox_label || "I accept"
+                    checkbox_label: r.checkbox_label || "I accept the terms"
                 })))
             }
             setLoading(false)
@@ -124,21 +124,24 @@ export default function FormPage() {
       const q = questions[index]
       const val = answers[q.id]
       
-      if (q.required && !val && !['title','info'].includes(q.question_type)) {
-          alert("Required")
-          return
+      if (['title', 'info'].includes(q.question_type)) { goStep(1); return }
+      if (q.question_type === 'consent' && !consentChecked) { alert("Please check the box to continue."); return }
+      if (q.required) {
+          if (!val || (typeof val === 'string' && !val.trim())) { alert("Required field"); return }
       }
-      if (q.question_type === 'consent' && !consentChecked) {
-          alert("Must accept terms")
-          return
-      }
+      goStep(1)
+  }
 
-      if (index < questions.length - 1) {
-          setIndex(index + 1)
-          setConsentChecked(false)
-      } else {
-          handleSubmit()
-      }
+  const goStep = (dir) => {
+    if (index + dir < 0) return
+    if (index + dir >= questions.length) { handleSubmit(); return }
+    setIndex(index + dir)
+    setConsentChecked(false)
+  }
+
+  const handleChoice = (opt) => {
+    setAnswers({...answers, [questions[index].id]: opt})
+    setTimeout(() => goStep(1), 150)
   }
 
   const updateContact = (field, val) => {
@@ -155,6 +158,29 @@ export default function FormPage() {
   const val = answers[q.id] || ""
   const isCentered = ['title', 'info'].includes(q.question_type)
   const isTitle = q.question_type === 'title'
+  
+  // Helper for Stars
+  const renderStars = (max, current) => {
+    const stars = []
+    for (let i = 1; i <= max; i++) {
+      const fill = i <= (current || 0) ? "#F59E0B" : "none" 
+      const stroke = i <= (current || 0) ? "#F59E0B" : theme.border
+      stars.push(
+        <svg key={i} width="40" height="40" viewBox="0 0 24 24" fill={fill} stroke={stroke} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"
+          style={{ cursor: 'pointer', margin: '0 5px', transition: 'transform 0.1s' }}
+          onClick={() => {
+              setAnswers({...answers, [q.id]: i});
+              setTimeout(() => next(), 300);
+          }}
+          onMouseEnter={(e) => e.target.style.transform = "scale(1.2)"}
+          onMouseLeave={(e) => e.target.style.transform = "scale(1)"}
+        >
+          <polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"></polygon>
+        </svg>
+      )
+    }
+    return <div style={{ display: 'flex', justifyContent: 'center', padding: '20px 0' }}>{stars}</div>
+  }
 
   return (
     <div className="container">
@@ -162,6 +188,7 @@ export default function FormPage() {
       <style jsx global>{`
         body { margin: 0; background-color: ${theme.bg}; color: ${theme.text}; font-family: ${theme.font_family}; }
         .container { min-height: 100vh; display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 20px; box-sizing:border-box; }
+        .progress-bar { position: fixed; top: 0; left: 0; height: 4px; background: ${theme.accent}; transition: width 0.3s; z-index: 99; }
         
         .card {
           background: ${theme.card}; width: 100%; max-width: 800px; min-height: 500px;
@@ -171,18 +198,28 @@ export default function FormPage() {
           padding: 60px; display: flex; flex-direction: column; position: relative;
         }
         
-        .btn {
+        .question-title { 
+          font-size: ${isTitle ? '36px' : (isCentered ? '30px' : '24px')}; 
+          font-weight: ${isTitle ? '400' : '600'};
+          text-align: ${isCentered ? 'center' : 'left'}; margin: 0 0 10px 0; color: ${theme.text};
+        }
+        .description { 
+          font-size: 16px; font-weight: 400; text-align: ${isCentered ? 'center' : 'left'};
+          color: ${theme.subtext}; margin-bottom: 30px; line-height: 1.5;
+        }
+
+        .btn-action {
             background: ${theme.accent}; color: ${theme.accent_text}; 
             padding: 12px 32px; border-radius: ${theme.radius}px; border: none; 
             font-weight: bold; cursor: pointer; font-size: 18px; margin-top: 20px; transition: opacity 0.2s;
         }
-        .btn:hover { opacity: 0.9; }
+        .btn-action:hover { opacity: 0.9; }
         
-        .input {
+        .tf-input {
             width: 100%; border: none; border-bottom: 1px solid ${theme.border};
             background: transparent; padding: 10px 0; font-size: 24px; color: ${theme.text}; outline: none;
         }
-        .input:focus { border-bottom: 2px solid ${theme.accent}; }
+        .tf-input:focus { border-bottom: 2px solid ${theme.accent}; }
         
         .choice-item {
           padding: 15px; border: 1px solid ${theme.border}; border-radius: ${theme.radius}px;
@@ -191,6 +228,10 @@ export default function FormPage() {
         }
         .choice-item:hover, .choice-item.selected { 
             border-color: ${theme.accent}; background: ${theme.card}; color: ${theme.accent}; box-shadow: 0 0 0 1px ${theme.accent};
+        }
+        .key-badge { 
+          width: 28px; height: 28px; border: 1px solid ${theme.border}; color: ${theme.subtext}; border-radius: 4px; 
+          display: flex; align-items: center; justify-content: center; margin-right: 15px; font-size: 12px; font-weight: 700;
         }
 
         .slider-container { width: 100%; padding: 30px 0; text-align: center; }
@@ -204,50 +245,55 @@ export default function FormPage() {
             background: ${theme.bg}; color: ${theme.text}; box-sizing: border-box; font-size:16px;
         }
         
-        .subtext { color: ${theme.subtext}; font-size: 18px; margin-bottom: 30px; text-align: ${isCentered ? 'center':'left'}; }
-        h1 { margin: 0 0 10px 0; font-size: ${isTitle ? '36px' : '32px'}; text-align: ${isCentered ? 'center':'left'}; font-weight: ${isTitle ? 'bold' : '500'}; }
+        .footer { margin-top: auto; padding-top: 20px; display: flex; justify-content: space-between; align-items: center; width: 100%; }
       `}</style>
 
+      <div className="progress-bar" style={{ width: `${((index + 1) / questions.length) * 100}%` }} />
+
       <div className="card">
-        <h1>{q.question_text}</h1>
-        {q.description && <div className="subtext">{q.description}</div>}
+        <div style={{ flexGrow: 1 }}>
+          <h1 className="question-title">{q.question_text}{q.required && <span style={{color:'red'}}>*</span>}</h1>
+          {q.description && <div className="description">{q.description}</div>}
 
-        <div style={{flexGrow: 1, width:'100%'}}>
-            {['text', 'email', 'number', 'phone'].includes(q.question_type) && (
-                <input ref={inputRef} className="input" placeholder="Type here..." value={val} 
-                    type={q.question_type === 'number' ? 'number' : 'text'}
-                    onChange={e => setAnswers({...answers, [q.id]: e.target.value})} 
-                    onKeyDown={e => e.key === 'Enter' && next()}
-                />
-            )}
+          <div style={{ width: '100%', marginTop: 20 }}>
             
+            {/* TEXT / EMAIL / PHONE / NUMBER */}
+            {['text', 'email', 'phone', 'number'].includes(q.question_type) && (
+               <div style={{display:'flex'}}>
+                 <input ref={inputRef} className="tf-input"
+                   type={q.question_type === 'number' ? 'number' : 'text'}
+                   placeholder="Type your answer here..."
+                   value={val || ''}
+                   onChange={e => setAnswers({...answers, [q.id]: e.target.value})}
+                   onKeyDown={e => e.key === 'Enter' && next()}
+                 />
+                 <button className="btn-action" style={{marginLeft:15, marginTop:0}} onClick={next}>OK</button>
+               </div>
+            )}
+
+            {/* LONG TEXT */}
             {q.question_type === 'long_text' && (
-                <textarea className="input" style={{border:`1px solid ${theme.border}`, minHeight:120, padding:15, borderRadius: theme.radius}}
-                    placeholder="Type here..." value={val} 
-                    onChange={e => setAnswers({...answers, [q.id]: e.target.value})} 
-                />
+              <textarea className="tf-input" placeholder="Type..." value={val || ''}
+                onChange={e => setAnswers({...answers, [q.id]: e.target.value})}
+                style={{minHeight: 120, resize:'none', border: `1px solid ${theme.border}`, borderRadius: theme.radius, padding: 15}}
+              />
             )}
 
+            {/* CHOICES */}
             {['single_choice', 'yes_no'].includes(q.question_type) && (
-                <div>
-                    {(q.question_type === 'yes_no' ? ['Yes','No'] : q.options).map((opt, i) => (
-                        <div key={i} className={`choice-item ${val === opt ? 'selected' : ''}`} 
-                             onClick={() => { setAnswers({...answers, [q.id]: opt}); setTimeout(next, 150); }}>
-                            <span style={{fontWeight:'bold', marginRight:10}}>{String.fromCharCode(65+i)}</span> {opt}
-                        </div>
-                    ))}
-                </div>
+              <div>
+                {(q.question_type === 'yes_no' ? ['Yes', 'No'] : q.options).map((opt, i) => (
+                  <div key={i} className={`choice-item ${val === opt ? 'selected' : ''}`} onClick={() => handleChoice(opt)}>
+                    <div className="key-badge">{String.fromCharCode(65 + i)}</div> {opt}
+                  </div>
+                ))}
+              </div>
             )}
 
-            {q.question_type === 'rating' && (
-                <div style={{display:'flex', justifyContent:'center', fontSize:40, cursor:'pointer'}}>
-                    {[...Array(q.range_max || 5)].map((_, i) => (
-                        <span key={i} style={{color: (i+1) <= val ? '#F59E0B' : theme.border, margin:'0 5px'}}
-                              onClick={() => { setAnswers({...answers, [q.id]: i+1}); setTimeout(next, 300); }}>★</span>
-                    ))}
-                </div>
-            )}
+            {/* RATING */}
+            {q.question_type === 'rating' && renderStars(parseInt(q.range_max || 5), parseInt(val))}
 
+            {/* SLIDER */}
             {q.question_type === 'slider' && (
                <div className="slider-container">
                  <div style={{fontSize: 48, fontWeight: 700, color: theme.accent, marginBottom: 20}}>
@@ -265,8 +311,9 @@ export default function FormPage() {
                </div>
             )}
 
+            {/* CONTACT INFO */}
             {q.question_type === 'contact_info' && (
-                <div className="contact-grid">
+                <div className={`contact-grid ${['First Name', 'Last Name'].every(f => (q.included_fields||[]).includes(f)) ? 'has-names' : ''}`}>
                    {['First Name', 'Last Name', 'Email', 'Phone', 'Company'].filter(f => (q.included_fields||['First Name', 'Email']).includes(f)).map(f => (
                      <div key={f} className="contact-field">
                         <label style={{display:'block', marginBottom:5, fontSize:12, fontWeight:'bold', color:theme.subtext}}>{f}</label>
@@ -279,6 +326,7 @@ export default function FormPage() {
                 </div>
             )}
 
+            {/* CONSENT */}
             {q.question_type === 'consent' && (
                 <label style={{display:'flex', alignItems:'center', cursor:'pointer', padding: 15, border: `1px solid ${theme.border}`, borderRadius: theme.radius}}>
                     <input type="checkbox" style={{width: 20, height: 20, marginRight: 15}} 
@@ -287,13 +335,18 @@ export default function FormPage() {
                     <span style={{fontWeight: 600}}>{q.checkbox_label}</span>
                 </label>
             )}
+
+          </div>
         </div>
 
-        <div style={{display:'flex', justifyContent:'space-between', alignItems:'center', marginTop: 30}}>
-            {index > 0 ? <button style={{background:'none', border:'none', cursor:'pointer', color: theme.subtext}} onClick={() => setIndex(index-1)}>Back</button> : <div/>}
-            <button className="btn" onClick={next}>
-                {index === questions.length - 1 ? "Submit" : (q.button_text || "Continue")}
+        {/* FOOTER */}
+        <div className="footer">
+          {index > 0 ? <button style={{background:'none', border:'none', cursor:'pointer', color: theme.subtext}} onClick={() => goStep(-1)}>Back</button> : <div></div>}
+          {(!['text', 'email', 'phone', 'number', 'single_choice', 'yes_no'].includes(q.question_type) || index === questions.length - 1) && (
+            <button className="btn-action" onClick={next}>
+              {index === questions.length - 1 ? 'Submit' : (q.button_text || 'Continue')}
             </button>
+          )}
         </div>
       </div>
     </div>
