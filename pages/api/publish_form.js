@@ -8,27 +8,24 @@ export default async function handler(req, res) {
   if (req.method !== "POST") return res.status(405).send("Method not allowed");
 
   try {
-    const { form } = req.body;
+    const { form, keys } = req.body;
     if (!form || !form.id) return res.status(400).json({ error: "Missing form data" });
 
     const formId = form.id;
 
-    // Upsert form meta
-    await supabase
-      .from("forms")
-      .upsert({
+    // 1. Upsert form meta
+    await supabase.from("forms").upsert({
         id: formId,
         title: form.title,
         description: form.description || "",
         created_at: form.created_at,
         updated_at: new Date().toISOString(),
-      })
-      .execute();
+      }).execute();
 
-    // Delete existing questions
+    // 2. Delete existing questions
     await supabase.from("questions").delete().eq("form_id", formId).execute();
 
-    // Insert questions
+    // 3. Insert questions
     const slides = form.slides || [];
     for (let idx = 0; idx < slides.length; idx++) {
       const s = slides[idx];
@@ -42,6 +39,15 @@ export default async function handler(req, res) {
         help_text: s.help_text || "",
         order: idx,
       });
+    }
+
+    // 4. Securely store the encryption keys (NEW LOGIC)
+    if (keys && keys.q_key && keys.p_key) {
+      await supabase.from("survey_keys").upsert({
+        form_id: formId,
+        q_key: keys.q_key,
+        p_key: keys.p_key
+      }).execute();
     }
 
     const publicUrl = `https://${req.headers.host}/form/${formId}`;
